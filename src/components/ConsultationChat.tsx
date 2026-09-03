@@ -23,7 +23,7 @@ export const ConsultationChat: React.FC<ConsultationChatProps> = ({
   masterTitle,
   masterSubtitle,
   contextSummary,
-  initialMessagePlaceholder = "Nhập câu hỏi hoặc tâm sự thêm với Thầy / Reader...",
+  initialMessagePlaceholder = "Nhập câu hỏi hoặc tâm sự thêm cùng bạn đồng hành...",
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState("");

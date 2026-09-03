@@ -16,19 +16,28 @@ import {
   Trash2,
   FileAudio,
   Sparkles,
+  CheckCircle2,
+  User,
+  ShieldCheck,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { UserProfile } from "../types";
+import {
+  UserTrackItem,
+  syncAndGetTracks,
+  saveTracksForUser,
+  deleteTrackForUser,
+  updateTrackDuration,
+  clearAllTracksForUser,
+} from "../utils/musicStorage";
 
-export interface UserTrack {
-  id: string;
-  title: string;
-  artist: string;
-  src: string;
-  duration: number; // in seconds
-  fileSize?: string;
+export interface UserTrack extends UserTrackItem {}
+
+interface MusicPlayerProps {
+  currentUser?: UserProfile | null;
 }
 
-export const MusicPlayer: React.FC = () => {
+export const MusicPlayer: React.FC<MusicPlayerProps> = ({ currentUser }) => {
   const [playlist, setPlaylist] = useState<UserTrack[]>([]);
   const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -39,52 +48,104 @@ export const MusicPlayer: React.FC = () => {
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showPlaylistDrawer, setShowPlaylistDrawer] = useState<boolean>(false);
   const [isDraggingOver, setIsDraggingOver] = useState<boolean>(false);
+  const [isLoadingTracks, setIsLoadingTracks] = useState<boolean>(true);
+  const [saveNotification, setSaveNotification] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Compute active user storage key
+  const activeUserId = currentUser?.id || currentUser?.email || "guest_user";
+  const userName = currentUser?.name || "Khách";
+
+  // Load persisted tracks whenever active user changes & sync with cloud
+  useEffect(() => {
+    let isMounted = true;
+    const loadUserMusic = async () => {
+      setIsLoadingTracks(true);
+      try {
+        const savedTracks = await syncAndGetTracks(activeUserId, (updatedTracks) => {
+          if (isMounted) {
+            setPlaylist(updatedTracks);
+          }
+        });
+        if (isMounted) {
+          setPlaylist(savedTracks);
+          setCurrentTrackIndex(0);
+          setCurrentTime(0);
+          setDuration(0);
+          setIsPlaying(false);
+        }
+      } catch (err) {
+        console.error("Error loading user music:", err);
+      } finally {
+        if (isMounted) setIsLoadingTracks(false);
+      }
+    };
+
+    loadUserMusic();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeUserId]);
+
   const currentTrack = playlist[currentTrackIndex] || null;
 
   // Handle files selected or dropped
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    const newTracks: UserTrack[] = [];
+    const filesToUpload: {
+      id: string;
+      title: string;
+      artist: string;
+      file: File;
+      fileSize: string;
+    }[] = [];
 
     Array.from(files).forEach((file, index) => {
-      // Check if it's an audio file
-      if (file.type.startsWith("audio/") || /\.(mp3|wav|m4a|ogg|aac|flac|webm)$/i.test(file.name)) {
-        const url = URL.createObjectURL(file);
+      if (
+        file.type.startsWith("audio/") ||
+        /\.(mp3|wav|m4a|ogg|aac|flac|webm)$/i.test(file.name)
+      ) {
         const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
         const sizeFormatted = (file.size / (1024 * 1024)).toFixed(1) + " MB";
 
-        newTracks.push({
+        filesToUpload.push({
           id: `track-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 7)}`,
           title: nameWithoutExt,
-          artist: "Nhạc của bạn",
-          src: url,
-          duration: 0, // will be updated when metadata loads
+          artist: currentUser?.name ? `Tải lên bởi ${currentUser.name}` : "Nhạc của bạn",
+          file,
           fileSize: sizeFormatted,
         });
       }
     });
 
-    if (newTracks.length > 0) {
-      setPlaylist((prev) => {
-        const updated = [...prev, ...newTracks];
-        // If this is the first batch of tracks, start playing the first one
-        if (prev.length === 0) {
-          setCurrentTrackIndex(0);
-          setIsPlaying(true);
-        }
-        return updated;
-      });
+    if (filesToUpload.length > 0) {
+      try {
+        const savedItems = await saveTracksForUser(activeUserId, filesToUpload);
+        
+        setPlaylist((prev) => {
+          const updated = [...prev, ...savedItems];
+          if (prev.length === 0) {
+            setCurrentTrackIndex(0);
+            setIsPlaying(true);
+          }
+          return updated;
+        });
+
+        // Trigger flash notification
+        setSaveNotification(`Đã lưu ${filesToUpload.length} bài hát vào tài khoản ${userName}!`);
+        setTimeout(() => setSaveNotification(null), 3500);
+      } catch (err) {
+        console.error("Error saving uploaded tracks to storage:", err);
+      }
     }
   };
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     handleFiles(e.target.files);
-    // Reset file input so same file can be uploaded again if needed
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -144,9 +205,15 @@ export const MusicPlayer: React.FC = () => {
     setShowPlaylistDrawer(false);
   };
 
-  // Delete a track from playlist
-  const handleDeleteTrack = (e: React.MouseEvent, id: string) => {
+  // Delete a track from playlist & storage
+  const handleDeleteTrack = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
+    try {
+      await deleteTrackForUser(activeUserId, id);
+    } catch (err) {
+      console.error("Error deleting track from db:", err);
+    }
+
     setPlaylist((prev) => {
       const idxToDelete = prev.findIndex((t) => t.id === id);
       const filtered = prev.filter((t) => t.id !== id);
@@ -168,6 +235,18 @@ export const MusicPlayer: React.FC = () => {
 
       return filtered;
     });
+  };
+
+  // Clear all tracks
+  const handleClearAll = async () => {
+    if (window.confirm("Bạn có chắc chắn muốn xóa toàn bộ danh sách nhạc đã lưu của tài khoản này?")) {
+      await clearAllTracksForUser(activeUserId);
+      setPlaylist([]);
+      setIsPlaying(false);
+      setCurrentTime(0);
+      setDuration(0);
+      setCurrentTrackIndex(0);
+    }
   };
 
   // Sync audio source when current track changes
@@ -208,11 +287,11 @@ export const MusicPlayer: React.FC = () => {
           }
         }}
         onLoadedMetadata={() => {
-          if (audioRef.current) {
+          if (audioRef.current && currentTrack) {
             const d = audioRef.current.duration;
             setDuration(d);
-            // Save duration into current track object
-            if (currentTrack) {
+            if (currentTrack.duration !== d) {
+              updateTrackDuration(currentTrack.id, d);
               setPlaylist((prev) =>
                 prev.map((t, idx) => (idx === currentTrackIndex ? { ...t, duration: d } : t))
               );
@@ -237,6 +316,21 @@ export const MusicPlayer: React.FC = () => {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        {/* Floating Notification for saving music */}
+        <AnimatePresence>
+          {saveNotification && (
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.9 }}
+              className="absolute -top-12 right-0 bg-emerald-950/90 text-emerald-200 border border-emerald-500/50 px-3.5 py-1.5 rounded-full text-xs font-semibold shadow-2xl backdrop-blur-md flex items-center gap-2 whitespace-nowrap"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{saveNotification}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <AnimatePresence mode="wait">
           {/* CASE 1: EMPTY PLAYLIST -> INVITING UPLOAD BUTTON */}
           {playlist.length === 0 ? (
@@ -260,11 +354,18 @@ export const MusicPlayer: React.FC = () => {
                 <Upload className="w-4 h-4 animate-bounce" />
               </div>
               <div className="text-left font-playfair pr-1">
-                <p className="text-xs sm:text-sm font-bold text-amber-200 leading-tight">
-                  Tải Nhạc Của Bạn Lên
-                </p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs sm:text-sm font-bold text-amber-200 leading-tight">
+                    Tải Nhạc Của Bạn Lên
+                  </p>
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    Tự lưu
+                  </span>
+                </div>
                 <p className="text-[10px] text-slate-400 leading-tight mt-0.5">
-                  Bấm để chọn tệp .mp3 / .wav
+                  {currentUser?.isLoggedIn
+                    ? `Lưu theo tài khoản: ${currentUser.name}`
+                    : "Bấm để chọn tệp .mp3 / .wav"}
                 </p>
               </div>
             </motion.button>
@@ -303,9 +404,11 @@ export const MusicPlayer: React.FC = () => {
                     {currentTrack?.title || "Nhạc của bạn"}
                   </p>
                 </div>
-                <p className="text-[10px] text-slate-400 truncate leading-tight mt-0.5">
-                  {playlist.length} bài đã tải lên
-                </p>
+                <div className="flex items-center gap-1 text-[10px] text-slate-400 truncate leading-tight mt-0.5">
+                  <span>{playlist.length} bài đã lưu</span>
+                  <span>•</span>
+                  <span className="text-emerald-400 font-sans">vĩnh viễn</span>
+                </div>
               </div>
 
               {/* Quick Controls: Prev, Play/Pause, Next */}
@@ -364,22 +467,31 @@ export const MusicPlayer: React.FC = () => {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 30 }}
               transition={{ duration: 0.28 }}
-              className="w-80 sm:w-[380px] rounded-2xl bg-[#0c0f17]/95 border border-amber-500/35 shadow-[0_16px_50px_rgba(0,0,0,0.85),0_0_30px_rgba(251,191,36,0.18)] backdrop-blur-2xl p-4 sm:p-5 flex flex-col gap-3.5 relative overflow-hidden font-playfair"
+              className="w-80 sm:w-[390px] rounded-2xl bg-[#0c0f17]/95 border border-amber-500/35 shadow-[0_16px_50px_rgba(0,0,0,0.85),0_0_30px_rgba(251,191,36,0.18)] backdrop-blur-2xl p-4 sm:p-5 flex flex-col gap-3.5 relative overflow-hidden font-playfair"
             >
               {/* Glow Accents */}
               <div className="absolute top-0 right-0 w-36 h-36 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
               <div className="absolute bottom-0 left-0 w-36 h-36 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
-              {/* Header */}
+              {/* Header with Account Indicator */}
               <div className="flex items-center justify-between pb-2 border-b border-white/10 relative z-10">
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-sm">
-                    <Music className="w-3.5 h-3.5" />
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shadow-sm">
+                    <Music className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="font-bold text-xs text-amber-200 tracking-wide">
-                      Trình Phát Nhạc Của Bạn
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-xs text-amber-200 tracking-wide">
+                        Kho Nhạc Cá Nhân
+                      </span>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-0.5">
+                        <Sparkles className="w-2.5 h-2.5 text-emerald-400" />
+                        <span>Đa Thiết Bị</span>
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate max-w-[170px]">
+                      Tài khoản: <span className="text-amber-300/90 font-sans">{userName}</span>
+                    </p>
                   </div>
                 </div>
 
@@ -538,8 +650,8 @@ export const MusicPlayer: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="p-2 rounded-xl text-slate-400 hover:text-amber-300 hover:bg-white/5 border border-white/5 transition-all"
-                  title="Tải thêm bài hát mới"
+                  className="p-2 rounded-xl text-slate-400 hover:text-amber-300 hover:bg-white/5 border border-white/5 transition-all flex items-center gap-1"
+                  title="Tải thêm bài hát mới (tự động lưu vào tài khoản)"
                 >
                   <Plus className="w-4 h-4 text-amber-400" />
                 </button>
@@ -556,20 +668,32 @@ export const MusicPlayer: React.FC = () => {
                     className="overflow-hidden border-t border-white/10 pt-2.5 space-y-2"
                   >
                     <div className="flex items-center justify-between">
-                      <p className="text-[11px] uppercase font-bold text-amber-300/90 tracking-wider">
-                        Danh Sách Nhạc Của Bạn ({playlist.length}):
+                      <p className="text-[11px] uppercase font-bold text-amber-300/90 tracking-wider flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        Danh Sách Đã Lưu ({playlist.length}):
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="text-[10px] text-amber-300 hover:underline flex items-center gap-1"
-                      >
-                        <Plus className="w-3 h-3" />
-                        <span>Thêm bài</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {playlist.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleClearAll}
+                            className="text-[10px] text-rose-400/80 hover:text-rose-300 transition-colors"
+                          >
+                            Xóa hết
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="text-[10px] text-amber-300 hover:underline flex items-center gap-1"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>Thêm bài</span>
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="max-h-40 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                    <div className="max-h-44 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
                       {playlist.map((trk, i) => {
                         const isCurrent = i === currentTrackIndex;
                         return (
@@ -588,9 +712,10 @@ export const MusicPlayer: React.FC = () => {
                               </span>
                               <div className="truncate">
                                 <p className="truncate font-bold">{trk.title}</p>
-                                <p className="text-[10px] text-slate-400 truncate">
-                                  {trk.duration > 0 ? formatTime(trk.duration) : "Tệp cá nhân"}
-                                </p>
+                                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 truncate">
+                                  <span>{trk.duration > 0 ? formatTime(trk.duration) : "Tệp đã lưu"}</span>
+                                  {trk.fileSize && <span>• {trk.fileSize}</span>}
+                                </div>
                               </div>
                             </div>
 

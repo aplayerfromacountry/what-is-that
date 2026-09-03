@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   UserCheck,
   Briefcase,
@@ -16,36 +16,53 @@ import {
   ChevronRight,
   BookOpen,
   Compass,
+  User,
+  LogIn,
+  BookmarkCheck,
+  ExternalLink,
+  Maximize2,
+  Minimize2,
+  RotateCw,
+  Download,
+  Eye,
+  X,
+  FileImage,
 } from "lucide-react";
 import { TU_VI_ASPECTS } from "../data/tuViData";
-import { TuViAspect } from "../types";
+import { TuViAspect, UserProfile, AstrologicalProfile } from "../types";
 import { ImageUpload } from "./ImageUpload";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ConsultationChat } from "./ConsultationChat";
-import { saveHistoryItem } from "../utils/historyStorage";
-import { motion } from "motion/react";
+import { saveHistoryItem, isUserLoggedIn } from "../utils/historyStorage";
+import { updateUserAstroProfile } from "./AuthModal";
+import { motion, AnimatePresence } from "motion/react";
 
 interface TuViSectionProps {
   onSavedToHistory?: () => void;
+  currentUser?: UserProfile | null;
+  onOpenAuth?: () => void;
+  onUpdateUser?: (user: UserProfile | null) => void;
 }
 
-export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) => {
+export const TuViSection: React.FC<TuViSectionProps> = ({
+  onSavedToHistory,
+  currentUser,
+  onOpenAuth,
+  onUpdateUser,
+}) => {
   const [selectedAspect, setSelectedAspect] = useState<TuViAspect>(TU_VI_ASPECTS[0]);
   const [selectedQuestion, setSelectedQuestion] = useState<string>(
     TU_VI_ASPECTS[0].suggestions[0]
   );
   const [customQuestion, setCustomQuestion] = useState<string>("");
 
-  // User details
+  // Optional user details (guest / member)
   const [name, setName] = useState<string>("");
-  const [birthDate, setBirthDate] = useState<string>("");
-  const [birthHour, setBirthHour] = useState<string>("Giờ Thìn (07h - 09h)");
-  const [calendarType, setCalendarType] = useState<"solar" | "lunar">("solar");
-  const [gender, setGender] = useState<"Nam" | "Nữ" | "Khác">("Nam");
 
   // Image upload state
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [imageMimeType, setImageMimeType] = useState<string | null>(null);
+  const [isImageModalOpen, setIsImageModalOpen] = useState<boolean>(false);
 
   // Interpretation result & state
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -53,6 +70,15 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
   const [error, setError] = useState<string | null>(null);
   const [hasSaved, setHasSaved] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
+
+  // Auto-fill from user profile if available
+  useEffect(() => {
+    if (currentUser?.astroProfile?.fullName && !name) {
+      setName(currentUser.astroProfile.fullName);
+    } else if (currentUser?.name && !name) {
+      setName(currentUser.name);
+    }
+  }, [currentUser]);
 
   const getAspectIcon = (iconName: string) => {
     switch (iconName) {
@@ -88,11 +114,7 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
 
     try {
       const payload = {
-        name,
-        birthDate,
-        birthHour,
-        calendarType,
-        gender,
+        name: name.trim() || currentUser?.name || "Bạn",
         aspectTitle: selectedAspect.title,
         selectedQuestion,
         customQuestion,
@@ -113,8 +135,8 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
 
       setReadingResult(data.reading);
 
-      // Auto save to local history
-      saveHistoryItem({
+      // Save to local history only if logged in, including image
+      const saved = saveHistoryItem({
         type: "tu-vi",
         title: `Tử Vi - ${selectedAspect.title}`,
         aspectOrSpread: selectedAspect.title,
@@ -123,10 +145,14 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
         meta: {
           aspect: selectedAspect.title,
           hasImage: !!imageBase64,
+          imageUrl: imageBase64 || undefined,
         },
       });
-      setHasSaved(true);
-      if (onSavedToHistory) onSavedToHistory();
+
+      if (saved) {
+        setHasSaved(true);
+        if (onSavedToHistory) onSavedToHistory();
+      }
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Đã xảy ra sự cố khi kết nối luận giải.");
@@ -144,6 +170,44 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
 
   return (
     <div id="tu-vi-section" className="space-y-6">
+      {/* Lightbox Modal for Chart Image */}
+      {isImageModalOpen && imageBase64 && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
+            <div className="w-full flex items-center justify-between pb-3 text-amber-200">
+              <div className="flex items-center gap-2 font-cinzel font-semibold text-sm">
+                <FileImage className="w-4 h-4 text-amber-400" />
+                <span>Ảnh Lá Số Tử Vi Của Bạn</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={imageBase64}
+                  download="la-so-tu-vi.png"
+                  className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Tải Ảnh Về Máy
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setIsImageModalOpen(false)}
+                  className="p-1.5 rounded-lg glass-card hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="overflow-auto max-h-[80vh] rounded-xl border border-white/20 shadow-2xl bg-[#090b10]">
+              <img
+                src={imageBase64}
+                alt="Lá Số Tử Vi Phóng To"
+                className="max-w-full h-auto object-contain rounded-xl"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Intro Banner */}
       <div className="rounded-2xl glass-panel-gold p-5 sm:p-6 relative overflow-hidden backdrop-blur-2xl">
         <div className="max-w-3xl">
@@ -155,8 +219,8 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
             Luận Giải Lá Số Tử Vi Theo 7 Khía Cạnh
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 mt-2 leading-relaxed">
-            Chọn 1 trong 7 khía cạnh cuộc đời, chọn câu hỏi gợi ý hoặc tải lên ảnh lá số sẵn có
-            để được luận giải chi tiết thiên bàn, địa bàn, các cung vị và vận hạn chuẩn xác.
+            Lập lá số trực tuyến tại khung chuyên dụng bên dưới, chụp hoặc tải ảnh lá số để được
+            luận giải chi tiết thiên bàn, địa bàn, 12 cung vị, các sao chiếu mệnh và vận hạn chuẩn xác.
           </p>
         </div>
       </div>
@@ -268,17 +332,73 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
             </div>
           </div>
 
-          {/* Form Birth Details & Image Upload */}
+          {/* Ô Tạo Lá Số Tử Vi (Chuyển sang trang web ngoài trong tab mới) */}
+          <div className="rounded-2xl glass-panel p-5 sm:p-6 space-y-4 border border-amber-500/40 shadow-xl bg-gradient-to-br from-amber-500/10 via-black/40 to-transparent">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-300 border border-amber-400/40 flex items-center justify-center shrink-0 shadow-md">
+                  <Compass className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-amber-200 font-cinzel tracking-wide flex items-center gap-2">
+                    Tạo Lá Số Tử Vi Trực Tuyến
+                  </h2>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    Nhấn vào nút bên dưới để chuyển sang trang web tạo lá số Tử Vi chuẩn xác. Sau khi an sao lập lá số xong, bạn chỉ cần <strong>chụp ảnh màn hình</strong> hoặc <strong>lưu ảnh lá số</strong> rồi tải lên ở Bước 3.
+                  </p>
+                </div>
+              </div>
+
+              <a
+                href="https://tuvi.cohoc.net/lap-la-so-tu-vi.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500/30 to-amber-600/30 hover:from-amber-500/40 hover:to-amber-600/40 text-amber-200 border border-amber-400/50 hover:border-amber-300 text-xs sm:text-sm font-bold transition-all shadow-lg hover:shadow-amber-500/20 shrink-0 group"
+              >
+                <span>Tạo Lá Số Tại Đây</span>
+                <ExternalLink className="w-4 h-4 text-amber-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+              </a>
+            </div>
+
+            {/* Guide Steps */}
+            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-xs text-amber-100 space-y-1.5 leading-relaxed">
+              <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />
+                Quy trình 3 bước tiện lợi:
+              </div>
+              <ol className="list-decimal list-inside space-y-1 text-slate-300 text-[11px] pl-1">
+                <li>Bấm nút <strong>"Tạo Lá Số Tại Đây"</strong> ở trên để mở trang lập lá số trong tab mới.</li>
+                <li>Nhập ngày giờ sinh, bấm Lập Lá Số và <strong>chụp ảnh màn hình</strong> lá số Tử Vi.</li>
+                <li>Quay lại đây và <strong>tải ảnh lá số</strong> vào khung bên dưới để AI luận giải 12 cung vị!</li>
+              </ol>
+            </div>
+          </div>
+
+          {/* Form Image Upload & Submit Action */}
           <form onSubmit={handleInterpret} className="rounded-2xl glass-panel p-4 sm:p-5 space-y-4">
-            <h2 className="text-xs sm:text-sm font-semibold text-amber-300 font-cinzel flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-amber-400" />
-              Bước 3: Thông Tin Bản Mệnh & Tải Ảnh Lá Số (Nếu Có)
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-2.5">
+              <h2 className="text-xs sm:text-sm font-semibold text-amber-300 font-cinzel flex items-center gap-2">
+                <UserCheck className="w-4 h-4 text-amber-400" />
+                Bước 3: Tải Lên Ảnh Lá Số Vừa Tạo
+              </h2>
+
+              {/* Optional Name */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">Tên bạn:</span>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Nhập tên của bạn"
+                  className="glass-input rounded-lg px-2.5 py-1 text-xs text-slate-200 w-36"
+                />
+              </div>
+            </div>
 
             {/* Image upload area */}
             <ImageUpload
-              label="Tải Lên Ảnh Lá Số Tử Vi (Khuyên Dùng Để AI Phân Tích Chuẩn Xác)"
-              sublabel="Chụp hoặc tải ảnh lá số từ các trang lập lá số (JPG, PNG). AI sẽ đọc kỹ từng cung vị, chính tinh, tuần triệt."
+              label="Tải Lên Ảnh Lá Số Tử Vi (Khuyên Dùng Để AI Phân Tích Toàn Diện)"
+              sublabel="Tải ảnh lá số vừa tạo ở trên (JPG, PNG). AI sẽ đọc kỹ từng cung vị, chính tinh, tuần triệt."
               imagePreview={imageBase64}
               onImageChange={(b64, mime) => {
                 setImageBase64(b64);
@@ -286,90 +406,39 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
               }}
             />
 
-            {/* Birth Details Input Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Họ và Tên:</label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Nguyễn Văn A"
-                  className="w-full glass-input rounded-lg px-3 py-2 text-xs sm:text-sm"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Giới Tính:</label>
-                <div className="flex gap-2">
-                  {(["Nam", "Nữ", "Khác"] as const).map((g) => (
-                    <button
-                      key={g}
-                      type="button"
-                      onClick={() => setGender(g)}
-                      className={`flex-1 py-2 text-xs font-medium rounded-lg border transition-all backdrop-blur-md ${
-                        gender === g
-                          ? "bg-amber-500/20 border-amber-400 text-amber-300 shadow-sm"
-                          : "glass-card text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      {g}
-                    </button>
-                  ))}
+            {/* If image is uploaded, offer quick download & zoom buttons */}
+            {imageBase64 && (
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 text-emerald-300 font-medium">
+                  <Check className="w-4 h-4 text-emerald-400" />
+                  <span>Đã nạp ảnh lá số tử vi</span>
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">
-                  Ngày Sinh ({calendarType === "solar" ? "Dương Lịch" : "Âm Lịch"}):
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="date"
-                    value={birthDate}
-                    onChange={(e) => setBirthDate(e.target.value)}
-                    className="flex-1 glass-input rounded-lg px-3 py-2 text-xs sm:text-sm"
-                  />
-                  <select
-                    value={calendarType}
-                    onChange={(e) => setCalendarType(e.target.value as "solar" | "lunar")}
-                    className="glass-input rounded-lg px-2 py-2 text-xs text-slate-300"
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsImageModalOpen(true)}
+                    className="px-2.5 py-1.5 rounded-lg glass-card hover:bg-white/10 text-slate-300 hover:text-amber-300 text-[11px] font-medium flex items-center gap-1 transition-colors"
                   >
-                    <option value="solar" className="bg-[#0f172a] text-slate-200">Dương</option>
-                    <option value="lunar" className="bg-[#0f172a] text-slate-200">Âm</option>
-                  </select>
+                    <Eye className="w-3.5 h-3.5" />
+                    Xem ảnh phóng to
+                  </button>
+                  <a
+                    href={imageBase64}
+                    download="la-so-tu-vi.png"
+                    className="px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[11px] font-medium flex items-center gap-1 transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Lưu ảnh lá số về máy
+                  </a>
                 </div>
               </div>
-
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Giờ Sinh (12 Canh Giờ):</label>
-                <select
-                  value={birthHour}
-                  onChange={(e) => setBirthHour(e.target.value)}
-                  className="w-full glass-input rounded-lg px-3 py-2 text-xs sm:text-sm"
-                >
-                  <option value="Giờ Tý (23h - 01h)" className="bg-[#0f172a] text-slate-200">Giờ Tý (23h - 01h)</option>
-                  <option value="Giờ Sửu (01h - 03h)" className="bg-[#0f172a] text-slate-200">Giờ Sửu (01h - 03h)</option>
-                  <option value="Giờ Dần (03h - 05h)" className="bg-[#0f172a] text-slate-200">Giờ Dần (03h - 05h)</option>
-                  <option value="Giờ Mão (05h - 07h)" className="bg-[#0f172a] text-slate-200">Giờ Mão (05h - 07h)</option>
-                  <option value="Giờ Thìn (07h - 09h)" className="bg-[#0f172a] text-slate-200">Giờ Thìn (07h - 09h)</option>
-                  <option value="Giờ Tỵ (09h - 11h)" className="bg-[#0f172a] text-slate-200">Giờ Tỵ (09h - 11h)</option>
-                  <option value="Giờ Ngọ (11h - 13h)" className="bg-[#0f172a] text-slate-200">Giờ Ngọ (11h - 13h)</option>
-                  <option value="Giờ Mùi (13h - 15h)" className="bg-[#0f172a] text-slate-200">Giờ Mùi (13h - 15h)</option>
-                  <option value="Giờ Thân (15h - 17h)" className="bg-[#0f172a] text-slate-200">Giờ Thân (15h - 17h)</option>
-                  <option value="Giờ Dậu (17h - 19h)" className="bg-[#0f172a] text-slate-200">Giờ Dậu (17h - 19h)</option>
-                  <option value="Giờ Tuất (19h - 21h)" className="bg-[#0f172a] text-slate-200">Giờ Tuất (19h - 21h)</option>
-                  <option value="Giờ Hợi (21h - 23h)" className="bg-[#0f172a] text-slate-200">Giờ Hợi (21h - 23h)</option>
-                  <option value="Chưa rõ giờ sinh" className="bg-[#0f172a] text-slate-200">Chưa rõ giờ sinh</option>
-                </select>
-              </div>
-            </div>
+            )}
 
             {/* Submit Button */}
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-sm sm:text-base font-cinzel tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-[0.99] transition-all disabled:opacity-50 backdrop-blur-md"
+              className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-sm sm:text-base font-cinzel tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 active:scale-[0.99] transition-all disabled:opacity-50 backdrop-blur-md cursor-pointer"
             >
               {isLoading ? (
                 <>
@@ -433,11 +502,10 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
                   </div>
                   <div className="space-y-1">
                     <p className="font-cinzel text-sm font-semibold text-amber-300">
-                      Đang an sao & quán chiếu tinh bàn...
+                      Đang an sao & phân tích tinh bàn cùng bạn...
                     </p>
                     <p className="text-xs text-slate-400 max-w-xs">
-                      Bậc thầy đang xem xét thế đứng Tam Hợp, Xung Chiếu và hóa khí các cung vị để đưa ra lời
-                      khuyên thấu đáo nhất.
+                      Đang xem xét thế đứng Tam Hợp, Xung Chiếu và hóa khí các cung vị để chia sẻ lời khuyên thấu đáo nhất cùng bạn.
                     </p>
                   </div>
                 </div>
@@ -454,6 +522,40 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
                     {customQuestion || selectedQuestion}
                   </div>
 
+                  {/* Attached Chart Image Preview in Result */}
+                  {imageBase64 && (
+                    <div className="p-3 rounded-xl glass-card border border-amber-500/30 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-amber-300 flex items-center gap-1.5">
+                          <FileImage className="w-3.5 h-3.5" />
+                          Lá số tử vi đã phân tích:
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setIsImageModalOpen(true)}
+                            className="text-[11px] text-amber-300 hover:underline flex items-center gap-1"
+                          >
+                            <Eye className="w-3 h-3" /> Phóng to
+                          </button>
+                          <a
+                            href={imageBase64}
+                            download="la-so-tu-vi.png"
+                            className="text-[11px] text-emerald-300 hover:underline flex items-center gap-1"
+                          >
+                            <Download className="w-3 h-3" /> Lưu ảnh
+                          </a>
+                        </div>
+                      </div>
+                      <img
+                        src={imageBase64}
+                        alt="Lá Số Tử Vi"
+                        className="w-full max-h-48 object-cover rounded-lg border border-white/10 cursor-pointer hover:opacity-95 transition-opacity"
+                        onClick={() => setIsImageModalOpen(true)}
+                      />
+                    </div>
+                  )}
+
                   {/* Rendered Markdown */}
                   <div className="leading-relaxed">
                     <MarkdownRenderer content={readingResult} />
@@ -462,10 +564,10 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
                   {/* Master Follow-up Interactive Consultation */}
                   <ConsultationChat
                     discipline="tu-vi"
-                    masterTitle="Thầy Tử Vi Đẩu Số Tiền Bối"
-                    masterSubtitle="Đàm đạo sâu hơn về các cung vị, đại vận và thế đứng lá số"
-                    contextSummary={`Luận giải Tử Vi cho đương số ${name || "Gia chủ"}, khía cạnh ${selectedAspect.title}, câu hỏi: ${customQuestion || selectedQuestion}`}
-                    initialMessagePlaceholder="Hỏi thêm Thầy về cung hạn, sao chiếu hoặc cách hóa giải..."
+                    masterTitle="Người Bạn Đồng Hành Tử Vi"
+                    masterSubtitle="Cùng trò chuyện sâu hơn về các cung vị, thời vận và kế hoạch sắp tới"
+                    contextSummary={`Luận giải Tử Vi cho bạn ${name || "bạn thân"}, khía cạnh ${selectedAspect.title}, câu hỏi: ${customQuestion || selectedQuestion}`}
+                    initialMessagePlaceholder="Tâm sự thêm về cung hạn, sao chiếu hoặc cách vượt qua thử thách..."
                   />
                 </div>
               ) : (
@@ -478,8 +580,7 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
                       Chưa có dữ liệu luận giải
                     </p>
                     <p className="text-xs text-slate-500 max-w-xs">
-                      Vui lòng chọn khía cạnh, câu hỏi và nhấn "Khởi Động Luận Giải Tử Vi" để Thầy tiến hành
-                      quán chiếu lá số.
+                      Vui lòng tạo lá số ở khung trên, tải ảnh lên và nhấn "Khởi Động Luận Giải Tử Vi" để bắt đầu cùng bạn phân tích lá số.
                     </p>
                   </div>
                 </div>
@@ -491,3 +592,4 @@ export const TuViSection: React.FC<TuViSectionProps> = ({ onSavedToHistory }) =>
     </div>
   );
 };
+

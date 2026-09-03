@@ -453,7 +453,7 @@ export const TarotSection: React.FC<TarotSectionProps> = ({ onSavedToHistory }) 
                       Đang kết nối trực giác & thông điệp các lá bài...
                     </p>
                     <p className="text-xs text-slate-400 max-w-xs">
-                      Tarot Reader đang cảm nhận năng lượng và biểu tượng từ các lá bài để giải mã cho bạn.
+                      Đang cảm nhận năng lượng và biểu tượng từ các lá bài để chia sẻ góc nhìn chân thành nhất cùng bạn.
                     </p>
                   </div>
                 </div>
@@ -473,10 +473,10 @@ export const TarotSection: React.FC<TarotSectionProps> = ({ onSavedToHistory }) 
                   {/* Master Follow-up Consultation */}
                   <ConsultationChat
                     discipline="tarot"
-                    masterTitle="Tarot Reader Trực Giác"
-                    masterSubtitle="Lắng nghe tâm tư và soi chiếu thông điệp sâu hơn từ các lá bài"
+                    masterTitle="Người Bạn Tarot Trực Giác"
+                    masterSubtitle="Lắng nghe tâm tư và cùng bạn soi chiếu thông điệp sâu hơn từ các lá bài"
                     contextSummary={`Trải bài ${selectedSpread.name}, các lá đã rút: ${drawnCards.map(c => `${c.card.nameVi} (${c.position})`).join(", ")}, câu hỏi: ${question || "Thông điệp vũ trụ"}`}
-                    initialMessagePlaceholder="Tâm sự hoặc hỏi thêm Reader về một lá bài cụ thể hay lời khuyên tiếp theo..."
+                    initialMessagePlaceholder="Tâm sự hoặc hỏi thêm về một lá bài cụ thể hay hướng đi tiếp theo..."
                   />
                 </div>
               ) : (

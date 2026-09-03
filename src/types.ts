@@ -1,5 +1,32 @@
 export type TabType = "tu-vi" | "natal-chart" | "tarot" | "kinh-dich" | "history";
 
+export interface AstrologicalProfile {
+  fullName?: string;
+  birthDate?: string;
+  birthHour?: string;
+  calendarType?: "solar" | "lunar";
+  gender?: "Nam" | "Nữ" | "Khác";
+  birthPlace?: string;
+  sunSign?: string;
+  moonSign?: string;
+  risingSign?: string;
+  notes?: string;
+  tuViImageUrl?: string; // Ảnh Lá Số Tử Vi cá nhân
+  natalChartImageUrl?: string; // Ảnh Bản Đồ Sao cá nhân
+}
+
+export interface UserProfile {
+  id?: string;
+  name: string;
+  email: string;
+  isLoggedIn: boolean;
+  isAdmin?: boolean;
+  role?: "admin" | "user";
+  createdAt?: string;
+  lastLogin?: string;
+  astroProfile?: AstrologicalProfile;
+}
+
 export interface TuViAspect {
   id: string;
   title: string;
@@ -72,6 +99,7 @@ export interface HistoryItem {
     hexagram?: { name: string; number: number; quote?: { text: string; author: string } };
     aspect?: string;
     hasImage?: boolean;
+    imageUrl?: string;
   };
 }
 
