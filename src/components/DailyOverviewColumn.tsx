@@ -14,6 +14,9 @@ import {
   Star,
   UploadCloud,
   ChevronRight,
+  Lock,
+  LogIn,
+  FileImage,
 } from "lucide-react";
 import { getDailyLunarInfo } from "../utils/lunarCalendar";
 import { DailyLunarInfo, UserProfile } from "../types";
@@ -39,23 +42,54 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
 
   const hasTuVi = !!currentUser?.astroProfile?.tuViImageUrl;
   const hasNatal = !!currentUser?.astroProfile?.natalChartImageUrl;
-  const hasChart = hasTuVi || hasNatal || !!currentUser?.astroProfile?.birthDate;
+  const hasAstroImage = hasTuVi || hasNatal;
 
   useEffect(() => {
     const info = getDailyLunarInfo();
     setLunarInfo(info);
-  }, []);
 
-  const fetchAiDailyInsight = async () => {
-    if (!lunarInfo) return;
+    if (currentUser?.isLoggedIn && hasAstroImage) {
+      const cacheKey = `daily_analysis_${currentUser.email || currentUser.id || "user"}_${info.solarDate}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed.overview) setAiOverview(parsed.overview);
+          else if (parsed.reading) setAiOverview(parsed.reading);
+          if (parsed.metrics) setMetrics(parsed.metrics);
+          return;
+        } catch (e) {
+          // ignore
+        }
+      }
+      // Auto-trigger analysis for logged in user with chart image
+      fetchAiDailyInsight(info);
+    } else {
+      setAiOverview(null);
+      setMetrics(null);
+    }
+  }, [
+    currentUser?.isLoggedIn,
+    currentUser?.email,
+    currentUser?.id,
+    hasAstroImage,
+    currentUser?.astroProfile?.tuViImageUrl,
+    currentUser?.astroProfile?.natalChartImageUrl,
+  ]);
+
+  const fetchAiDailyInsight = async (infoOverride?: DailyLunarInfo) => {
+    const targetInfo = infoOverride || lunarInfo || getDailyLunarInfo();
+    if (!targetInfo) return;
+    if (!currentUser?.isLoggedIn || !hasAstroImage) return;
+
     setIsLoadingAi(true);
     try {
       const res = await fetch("/api/daily-overview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          dateStr: lunarInfo.solarDate,
-          lunarInfo,
+          dateStr: targetInfo.solarDate,
+          lunarInfo: targetInfo,
           userName: currentUser?.name || "Bạn",
           tuViImage: currentUser?.astroProfile?.tuViImageUrl,
           natalChartImage: currentUser?.astroProfile?.natalChartImageUrl,
@@ -66,6 +100,15 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
       if (data.success) {
         if (data.overview) setAiOverview(data.overview);
         if (data.metrics) setMetrics(data.metrics);
+        if (currentUser?.isLoggedIn) {
+          try {
+            const cacheKey = `daily_analysis_${currentUser.email || currentUser.id || "user"}_${targetInfo.solarDate}`;
+            localStorage.setItem(
+              cacheKey,
+              JSON.stringify({ overview: data.overview, metrics: data.metrics })
+            );
+          } catch (e) {}
+        }
       }
     } catch (err) {
       console.error("Error fetching AI daily overview:", err);
@@ -97,39 +140,68 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
                 Tổng Quan Ngày
               </h2>
               <p className="text-[11px] text-slate-400">
-                {hasChart ? "Đã cá nhân hóa theo lá số" : "Khí vận & Thiên văn chung"}
+                {currentUser?.isLoggedIn
+                  ? hasAstroImage
+                    ? "Đã cá nhân hóa theo lá số"
+                    : "Cần 1 trong 2 ảnh lá số"
+                  : "Khí vận & Thiên văn ngày"}
               </p>
             </div>
           </div>
           <span
             className={`px-2.5 py-0.5 rounded-full text-[10px] font-medium border shadow-sm ${
-              hasChart
+              currentUser?.isLoggedIn && hasAstroImage
                 ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                : currentUser?.isLoggedIn
+                ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                : "bg-slate-500/15 text-slate-300 border-slate-500/30"
             }`}
           >
-            {hasChart ? "Đã Khớp Lá Số" : "Hôm Nay"}
+            {currentUser?.isLoggedIn && hasAstroImage
+              ? "Đã Khớp Lá Số"
+              : currentUser?.isLoggedIn
+              ? "Cần Ảnh Lá Số"
+              : "Hôm Nay"}
           </span>
         </div>
 
         {/* Personalized Indicator or CTA */}
-        {!hasChart ? (
+        {!currentUser?.isLoggedIn ? (
           <div className="mb-4 p-2.5 rounded-xl bg-amber-500/10 border border-amber-400/25 flex items-center justify-between text-xs">
             <div className="space-y-0.5">
               <div className="text-[11px] font-semibold text-amber-300 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                <span>Năng lượng thiên văn chung</span>
+                <Lock className="w-3 h-3 text-amber-400" />
+                <span>Năng lượng cát hung cá nhân</span>
               </div>
               <p className="text-[10px] text-slate-400">
-                Tải lá số để nhận các con số cụ thể bám sát mệnh
+                Đăng nhập để xem điểm số & lời khuyên bám sát mệnh
               </p>
             </div>
             <button
               type="button"
-              onClick={currentUser ? onOpenUploadAstro : onOpenAuth}
-              className="px-2 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 text-amber-200 border border-amber-400/30 text-[10px] font-bold whitespace-nowrap transition-colors"
+              onClick={onOpenAuth}
+              className="px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 text-amber-200 border border-amber-400/30 text-[10px] font-bold whitespace-nowrap transition-colors cursor-pointer"
             >
-              {currentUser ? "Tải Lá Số" : "Đăng Nhập"} ↗
+              Đăng Nhập ↗
+            </button>
+          </div>
+        ) : !hasAstroImage ? (
+          <div className="mb-4 p-2.5 rounded-xl bg-amber-500/10 border border-amber-400/25 flex items-center justify-between text-xs">
+            <div className="space-y-0.5">
+              <div className="text-[11px] font-semibold text-amber-300 flex items-center gap-1">
+                <FileImage className="w-3 h-3 text-amber-400" />
+                <span>Cần 1 trong 2 ảnh lá số</span>
+              </div>
+              <p className="text-[10px] text-slate-400">
+                Tải lá số Tử Vi hoặc Bản đồ sao để bắt đầu phân tích
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenUploadAstro}
+              className="px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 text-amber-200 border border-amber-400/30 text-[10px] font-bold whitespace-nowrap transition-colors cursor-pointer"
+            >
+              Tải Lá Số ↗
             </button>
           </div>
         ) : (
@@ -150,7 +222,7 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
             <button
               type="button"
               onClick={onOpenPersonalizedModal}
-              className="px-2 py-1 rounded-lg bg-emerald-400/20 hover:bg-emerald-400/30 text-emerald-200 border border-emerald-400/40 text-[10px] font-bold whitespace-nowrap transition-colors"
+              className="px-2 py-1 rounded-lg bg-emerald-400/20 hover:bg-emerald-400/30 text-emerald-200 border border-emerald-400/40 text-[10px] font-bold whitespace-nowrap transition-colors cursor-pointer"
             >
               Xem Chi Tiết ↗
             </button>
@@ -192,70 +264,120 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
           </div>
         </div>
 
-        {/* Concrete Energy Metrics Cards (If available or when personalized) */}
-        {hasChart && metrics && (
-          <div className="glass-card rounded-xl p-3 space-y-2.5 mb-4 border border-amber-500/25 bg-amber-500/[0.04]">
+        {/* Concrete Energy Metrics Cards (Chỉ số cát hung & năng lượng) */}
+        {!currentUser?.isLoggedIn ? (
+          /* Khách: Ô Đăng Nhập Để Biết Chỉ Số Cát Hung & Năng Lượng */
+          <div className="glass-card rounded-xl p-3.5 space-y-2.5 mb-4 border border-amber-500/25 bg-amber-500/[0.04]">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-amber-300 flex items-center gap-1">
-                <Zap className="w-3.5 h-3.5 text-amber-400" />
-                Chỉ Số Năng Lượng:
+              <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                Chỉ Số Cát Hung Hôm Nay:
               </span>
-              <span className="text-amber-200 font-extrabold text-sm font-cinzel">
-                {metrics.overallScore}/100 • {metrics.statusLabel}
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                Cần Đăng Nhập
               </span>
             </div>
-            {/* 4 Mini Progress Bars */}
-            <div className="grid grid-cols-2 gap-2 text-[10px]">
-              <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
-                <div className="flex justify-between text-slate-400">
-                  <span>Tài Lộc</span>
-                  <span className="text-amber-300 font-bold">{metrics.fortuneScore}%</span>
-                </div>
-                <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                  <div
-                    className="bg-amber-400 h-full rounded-full transition-all duration-500"
-                    style={{ width: `${metrics.fortuneScore}%` }}
-                  />
-                </div>
-              </div>
-              <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
-                <div className="flex justify-between text-slate-400">
-                  <span>Sự Nghiệp</span>
-                  <span className="text-sky-300 font-bold">{metrics.careerScore}%</span>
-                </div>
-                <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                  <div
-                    className="bg-sky-400 h-full rounded-full transition-all duration-500"
-                    style={{ width: `${metrics.careerScore}%` }}
-                  />
-                </div>
-              </div>
-              <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
-                <div className="flex justify-between text-slate-400">
-                  <span>Nhân Duyên</span>
-                  <span className="text-rose-300 font-bold">{metrics.loveScore}%</span>
-                </div>
-                <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                  <div
-                    className="bg-rose-400 h-full rounded-full transition-all duration-500"
-                    style={{ width: `${metrics.loveScore}%` }}
-                  />
-                </div>
-              </div>
-              <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
-                <div className="flex justify-between text-slate-400">
-                  <span>Thân Tâm</span>
-                  <span className="text-emerald-300 font-bold">{metrics.healthScore}%</span>
-                </div>
-                <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                  <div
-                    className="bg-emerald-400 h-full rounded-full transition-all duration-500"
-                    style={{ width: `${metrics.healthScore}%` }}
-                  />
-                </div>
-              </div>
-            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed font-light">
+              Đăng nhập để AI tính toán điểm số cát hung và năng lượng ngày bám sát lá số Tử Vi & Bản đồ sao của bạn.
+            </p>
+            <button
+              type="button"
+              onClick={onOpenAuth}
+              className="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition-all cursor-pointer"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              Đăng Nhập Để Biết
+            </button>
           </div>
+        ) : !hasAstroImage ? (
+          /* Đã đăng nhập nhưng chưa có 1 trong 2 ảnh lá số */
+          <div className="glass-card rounded-xl p-3.5 space-y-2.5 mb-4 border border-amber-500/25 bg-amber-500/[0.04]">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                Chỉ Số Năng Lượng & Cát Hung:
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                Cần 1 Trong 2 Ảnh
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed font-light">
+              Cần tải lên <strong className="text-amber-200">Lá số Tử Vi</strong> hoặc <strong className="text-indigo-200">Bản đồ sao</strong> để AI bắt đầu tính toán điểm số cát hung và năng lượng ngày.
+            </p>
+            <button
+              type="button"
+              onClick={onOpenUploadAstro}
+              className="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition-all cursor-pointer"
+            >
+              <UploadCloud className="w-3.5 h-3.5" />
+              Tải Bản Đồ Sao / Lá Số Tử Vi
+            </button>
+          </div>
+        ) : (
+          metrics && (
+            <div className="glass-card rounded-xl p-3 space-y-2.5 mb-4 border border-amber-500/25 bg-amber-500/[0.04]">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-amber-300 flex items-center gap-1">
+                  <Zap className="w-3.5 h-3.5 text-amber-400" />
+                  Chỉ Số Năng Lượng:
+                </span>
+                <span className="text-amber-200 font-extrabold text-sm font-cinzel">
+                  {metrics.overallScore}/100 • {metrics.statusLabel}
+                </span>
+              </div>
+              {/* 4 Mini Progress Bars */}
+              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Tài Lộc</span>
+                    <span className="text-amber-300 font-bold">{metrics.fortuneScore}%</span>
+                  </div>
+                  <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                    <div
+                      className="bg-amber-400 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${metrics.fortuneScore}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Sự Nghiệp</span>
+                    <span className="text-sky-300 font-bold">{metrics.careerScore}%</span>
+                  </div>
+                  <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                    <div
+                      className="bg-sky-400 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${metrics.careerScore}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Nhân Duyên</span>
+                    <span className="text-rose-300 font-bold">{metrics.loveScore}%</span>
+                  </div>
+                  <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                    <div
+                      className="bg-rose-400 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${metrics.loveScore}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Thân Tâm</span>
+                    <span className="text-emerald-300 font-bold">{metrics.healthScore}%</span>
+                  </div>
+                  <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                    <div
+                      className="bg-emerald-400 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${metrics.healthScore}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
         )}
 
         {/* Lucky Hours */}
@@ -263,7 +385,7 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
           <div className="flex items-center justify-between text-xs font-semibold text-amber-300">
             <span className="flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 text-amber-400" />
-              {hasChart ? "Giờ Hoàng Đạo Bản Mệnh:" : "Giờ Hoàng Đạo Chung:"}
+              {hasAstroImage ? "Giờ Hoàng Đạo Bản Mệnh:" : "Giờ Hoàng Đạo Chung:"}
             </span>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -307,12 +429,30 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
 
         {/* AI Insight Button & Reveal */}
         <div className="mt-4 pt-3 border-t border-white/10 space-y-2">
-          {!aiOverview ? (
+          {!currentUser?.isLoggedIn ? (
             <button
               type="button"
-              onClick={fetchAiDailyInsight}
+              onClick={onOpenAuth}
+              className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500/20 via-indigo-600/20 to-purple-600/20 hover:from-amber-500/30 hover:via-indigo-600/30 hover:to-purple-600/30 border border-amber-400/40 text-amber-200 text-xs font-semibold flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99] backdrop-blur-md cursor-pointer"
+            >
+              <LogIn className="w-3.5 h-3.5 text-amber-300" />
+              Đăng Nhập Để Nhận Luận Giải Năng Lượng
+            </button>
+          ) : !hasAstroImage ? (
+            <button
+              type="button"
+              onClick={onOpenUploadAstro}
+              className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500/20 via-indigo-600/20 to-purple-600/20 hover:from-amber-500/30 hover:via-indigo-600/30 hover:to-purple-600/30 border border-amber-400/40 text-amber-200 text-xs font-semibold flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99] backdrop-blur-md cursor-pointer"
+            >
+              <UploadCloud className="w-3.5 h-3.5 text-amber-300" />
+              Tải 1 Trong 2 Ảnh Để Bắt Đầu Phân Tích
+            </button>
+          ) : !aiOverview ? (
+            <button
+              type="button"
+              onClick={() => fetchAiDailyInsight()}
               disabled={isLoadingAi}
-              className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500/20 via-indigo-600/20 to-purple-600/20 hover:from-amber-500/30 hover:via-indigo-600/30 hover:to-purple-600/30 border border-amber-400/40 text-amber-200 text-xs font-semibold flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99] disabled:opacity-50 backdrop-blur-md"
+              className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500/20 via-indigo-600/20 to-purple-600/20 hover:from-amber-500/30 hover:via-indigo-600/30 hover:to-purple-600/30 border border-amber-400/40 text-amber-200 text-xs font-semibold flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.99] disabled:opacity-50 backdrop-blur-md cursor-pointer"
             >
               {isLoadingAi ? (
                 <>
@@ -322,7 +462,7 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
               ) : (
                 <>
                   <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                  {hasChart ? "Luận Giải Năng Lượng Cụ Thể" : "Nhận Luận Giải Năng Lượng Chi Tiết"}
+                  Luận Giải Năng Lượng Cá Nhân Hóa
                 </>
               )}
             </button>
@@ -331,13 +471,13 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
               <div className="flex items-center justify-between text-xs text-amber-300 font-semibold">
                 <span className="flex items-center gap-1">
                   <Sparkles className="w-3.5 h-3.5" />
-                  {hasChart ? "Bản Phân Tích Bám Sát Lá Số" : "Thông Điệp Khí Vận Ngày"}
+                  Bản Phân Tích Bám Sát Lá Số
                 </span>
                 <button
                   type="button"
-                  onClick={fetchAiDailyInsight}
+                  onClick={() => fetchAiDailyInsight()}
                   disabled={isLoadingAi}
-                  className="text-[10px] text-slate-400 hover:text-amber-300 flex items-center gap-1 transition-colors"
+                  className="text-[10px] text-slate-400 hover:text-amber-300 flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   <RefreshCw className={`w-3 h-3 ${isLoadingAi ? "animate-spin" : ""}`} />
                   Cập nhật
@@ -349,17 +489,27 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
             </div>
           )}
 
-          {onOpenPersonalizedModal && (
-            <button
-              type="button"
-              onClick={onOpenPersonalizedModal}
-              className="w-full py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-amber-300 border border-white/10 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <Zap className="w-3 h-3 text-amber-400" />
-              <span>Mở Toàn Màn Hình Năng Lượng Ngày</span>
-              <ChevronRight className="w-3 h-3 ml-auto" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={
+              !currentUser?.isLoggedIn
+                ? onOpenAuth
+                : !hasAstroImage
+                ? onOpenUploadAstro
+                : onOpenPersonalizedModal
+            }
+            className="w-full py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-amber-300 border border-white/10 text-[11px] font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Zap className="w-3 h-3 text-amber-400" />
+            <span>
+              {!currentUser?.isLoggedIn
+                ? "Đăng Nhập Xem Toàn Màn Hình"
+                : !hasAstroImage
+                ? "Tải Ảnh Để Xem Toàn Màn Hình"
+                : "Mở Toàn Màn Hình Năng Lượng Ngày"}
+            </span>
+            <ChevronRight className="w-3 h-3 ml-auto" />
+          </button>
         </div>
       </div>
 

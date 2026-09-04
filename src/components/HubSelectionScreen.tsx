@@ -17,6 +17,9 @@ import {
   Calendar,
   Zap,
   Quote,
+  RefreshCw,
+  Lock,
+  FileImage,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { TabType, DailyLunarInfo } from "../types";
@@ -41,14 +44,91 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
 }) => {
   const [lunarInfo, setLunarInfo] = useState<DailyLunarInfo | null>(null);
   const [isDailyModalOpen, setIsDailyModalOpen] = useState<boolean>(false);
-
-  useEffect(() => {
-    setLunarInfo(getDailyLunarInfo());
-  }, []);
+  const [isAnalyzingDaily, setIsAnalyzingDaily] = useState<boolean>(false);
+  const [dailyMetrics, setDailyMetrics] = useState<any>(null);
+  const [dailyReading, setDailyReading] = useState<string | null>(null);
 
   const hasTuVi = !!currentUser?.astroProfile?.tuViImageUrl;
   const hasNatal = !!currentUser?.astroProfile?.natalChartImageUrl;
+  const hasAstroImage = hasTuVi || hasNatal;
   const hasBothImages = hasTuVi && hasNatal;
+
+  const runDailyAnalysis = (forceRefresh = false, infoOverride?: DailyLunarInfo) => {
+    if (!currentUser?.isLoggedIn) return;
+    // CRITICAL REQUIREMENT: User must have at least one of the two image files (Lá số Tử Vi hoặc Bản đồ sao)
+    if (!hasAstroImage) {
+      setDailyMetrics(null);
+      setDailyReading(null);
+      return;
+    }
+
+    const info = infoOverride || lunarInfo || getDailyLunarInfo();
+    const cacheKey = `daily_analysis_${currentUser.email || currentUser.id || "user"}_${info.solarDate}`;
+
+    if (!forceRefresh) {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed.metrics) setDailyMetrics(parsed.metrics);
+          if (parsed.reading || parsed.overview) setDailyReading(parsed.reading || parsed.overview);
+          return;
+        } catch (e) {
+          console.warn("Cached daily analysis parse failed", e);
+        }
+      }
+    }
+
+    setIsAnalyzingDaily(true);
+    fetch("/api/daily-personalized-energy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userName: currentUser.name || "Bạn",
+        tuViImage: currentUser.astroProfile?.tuViImageUrl,
+        natalChartImage: currentUser.astroProfile?.natalChartImageUrl,
+        astroProfile: currentUser.astroProfile,
+        dateStr: info.solarDate,
+        lunarInfo: info,
+      }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          if (data.metrics) setDailyMetrics(data.metrics);
+          if (data.reading) setDailyReading(data.reading);
+          try {
+            localStorage.setItem(
+              cacheKey,
+              JSON.stringify({ metrics: data.metrics, reading: data.reading })
+            );
+          } catch (e) {
+            // ignore
+          }
+        }
+      })
+      .catch((err) => console.error("Error analyzing daily energy:", err))
+      .finally(() => setIsAnalyzingDaily(false));
+  };
+
+  useEffect(() => {
+    const info = getDailyLunarInfo();
+    setLunarInfo(info);
+
+    if (currentUser?.isLoggedIn && hasAstroImage) {
+      runDailyAnalysis(false, info);
+    } else {
+      setDailyMetrics(null);
+      setDailyReading(null);
+    }
+  }, [
+    currentUser?.isLoggedIn,
+    currentUser?.email,
+    currentUser?.id,
+    hasAstroImage,
+    currentUser?.astroProfile?.tuViImageUrl,
+    currentUser?.astroProfile?.natalChartImageUrl,
+  ]);
 
   const mainCards = [
     {
@@ -202,14 +282,22 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
       {/* Main Hub Stage: Big Daily Energy Card + 4 Cards + 1 Small Card below */}
       <main className="relative z-10 w-full max-w-6xl mx-auto my-auto py-4 sm:py-6 flex flex-col items-center space-y-6 sm:space-y-7">
         
-        {/* BIG CARD ON TOP: NĂNG LƯỢNG CỦA NGÀY (Personalized Daily Energy) */}
+        {/* BIG CARD ON TOP: NĂNG LƯỢNG CỦA NGÀY (Hiện ngày tháng cho mọi người; ô cát hung & năng lượng hiện phân tích khi đăng nhập, hoặc ô đăng nhập để biết khi là khách) */}
         <motion.div
           initial={{ opacity: 0, y: -15 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45 }}
           whileHover={{ scale: 1.008 }}
           whileTap={{ scale: 0.992 }}
-          onClick={() => setIsDailyModalOpen(true)}
+          onClick={() => {
+            if (!currentUser?.isLoggedIn) {
+              onOpenAuth("account");
+            } else if (!hasAstroImage) {
+              onOpenAuth("astro");
+            } else {
+              setIsDailyModalOpen(true);
+            }
+          }}
           className="w-full px-2 sm:px-4 cursor-pointer group"
         >
           <div className="relative rounded-3xl glass-panel-gold border border-amber-400/40 hover:border-amber-400/80 p-5 sm:p-6 md:p-7 overflow-hidden shadow-2xl transition-all duration-300 group-hover:shadow-amber-500/20">
@@ -239,15 +327,31 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
               </div>
 
               <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-amber-500/15 group-hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-all shadow-sm">
-                <span>Xem Luận Giải Chi Tiết</span>
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                {!currentUser?.isLoggedIn ? (
+                  <>
+                    <Lock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Đăng Nhập Để Biết Cát Hung</span>
+                    <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                  </>
+                ) : !hasAstroImage ? (
+                  <>
+                    <UploadCloud className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Tải 1 Trong 2 Ảnh Để Bắt Đầu Phân Tích</span>
+                    <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                  </>
+                ) : (
+                  <>
+                    <span>Xem Luận Giải Chi Tiết</span>
+                    <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                  </>
+                )}
               </div>
             </div>
 
             {/* Content: 2 Sub-boxes side-by-side */}
             <div className="relative z-10 grid grid-cols-1 md:grid-cols-12 gap-4 items-stretch">
               
-              {/* SUB-BOX 1 (Left - 5 cols): Ô NHỎ GHI NGÀY THÁNG */}
+              {/* SUB-BOX 1 (Left - 5 cols): PHẦN NGÀY THÁNG HÔM NAY (Hiển thị cho cả khách và thành viên) */}
               <div className="md:col-span-5 rounded-2xl bg-black/40 border border-white/10 p-4 sm:p-4.5 flex flex-col justify-between space-y-3 backdrop-blur-md">
                 <div className="flex items-center justify-between border-b border-white/10 pb-2">
                   <span className="text-xs font-bold font-cinzel text-amber-400 flex items-center gap-1.5 uppercase tracking-wider">
@@ -259,7 +363,7 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
                   </span>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {/* Solar Date */}
                   <div className="flex items-center justify-between text-xs sm:text-sm">
                     <span className="text-slate-400 font-medium">Dương Lịch:</span>
@@ -291,67 +395,291 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
                     </div>
                   </div>
                 </div>
+
+                <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>Trực / Cát Tinh: {lunarInfo?.element ? "Hòa Hợp" : "Bình Hòa"}</span>
+                  <span className="text-amber-300/80 font-medium">Vận Nhật Vững Vàng</span>
+                </div>
               </div>
 
-              {/* SUB-BOX 2 (Right - 7 cols): BÊN CẠNH GHI NĂNG LƯỢNG & CHỈ SỐ TỐT XẤU THEO LÁ SỐ / BẢN ĐỒ SAO */}
-              <div className="md:col-span-7 rounded-2xl bg-gradient-to-br from-amber-500/10 via-indigo-950/30 to-purple-950/20 border border-amber-400/30 p-4 sm:p-4.5 flex flex-col justify-between space-y-3 backdrop-blur-md">
-                <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                  <div className="flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-amber-400" />
-                    <span className="text-xs font-bold font-cinzel text-amber-300 uppercase tracking-wider">
-                      Chỉ Số Năng Lượng & Cát Hung
+              {/* SUB-BOX 2 (Right - 7 cols): NĂNG LƯỢNG & CÁT HUNG */}
+              {!currentUser?.isLoggedIn ? (
+                /* 1. KHI LÀ KHÁCH (CHƯA ĐĂNG NHẬP): Ô ĐĂNG NHẬP ĐỂ BIẾT CÁT HUNG & NĂNG LƯỢNG */
+                <div className="md:col-span-7 rounded-2xl bg-gradient-to-br from-amber-500/10 via-indigo-950/40 to-purple-950/30 border border-amber-400/40 p-4 sm:p-5 flex flex-col justify-between space-y-3.5 backdrop-blur-md relative overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-amber-400" />
+                      <span className="text-xs font-bold font-cinzel text-amber-300 uppercase tracking-wider">
+                        Chỉ Số Năng Lượng & Cát Hung Bản Mệnh
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                      <Lock className="w-3 h-3" /> Cần đăng nhập
                     </span>
                   </div>
-                  <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                    Đại Cát Hanh Thông
-                  </span>
-                </div>
 
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  {/* Big Score */}
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-3xl sm:text-4xl font-extrabold text-amber-200 font-cinzel drop-shadow-sm">
-                      88<span className="text-sm font-normal text-amber-400/70">/100</span>
+                  <div className="space-y-2.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-3xl sm:text-4xl font-extrabold text-amber-300/70 font-cinzel tracking-wider">
+                          ??<span className="text-sm font-normal text-amber-400/40">/100</span>
+                        </span>
+                        <div>
+                          <div className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                            <span>Điểm Cát Hung Cá Nhân</span>
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-medium">Chưa mở</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 line-clamp-1">
+                            Tính toán độ hanh thông theo nhật vận & bản mệnh
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* 4 Mystery Aspect Badges */}
+                      <div className="grid grid-cols-4 gap-1.5 text-[10px] sm:min-w-[210px]">
+                        <div className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-center">
+                          <div className="text-slate-400 text-[9px]">Tài Lộc</div>
+                          <div className="font-bold text-amber-300/70">??%</div>
+                        </div>
+                        <div className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-center">
+                          <div className="text-slate-400 text-[9px]">Sự Nghiệp</div>
+                          <div className="font-bold text-sky-300/70">??%</div>
+                        </div>
+                        <div className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-center">
+                          <div className="text-slate-400 text-[9px]">Nhân Duyên</div>
+                          <div className="font-bold text-rose-300/70">??%</div>
+                        </div>
+                        <div className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-center">
+                          <div className="text-slate-400 text-[9px]">Thân Tâm</div>
+                          <div className="font-bold text-emerald-300/70">??%</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-300 leading-relaxed font-light">
+                      Đăng nhập tài khoản để AI đối chiếu can chi nhật vận với lá số Tử Vi & Bản đồ sao của bạn, khai mở điểm số cát hung và chỉ dẫn hanh thông trong ngày.
+                    </p>
+                  </div>
+
+                  {/* Call-to-action Button */}
+                  <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2.5">
+                    <span className="text-[11px] text-amber-300/80 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      Đăng nhập để nhận luận giải cá nhân hóa
                     </span>
-                    <div>
-                      <div className="text-xs font-bold text-slate-100">
-                        Vượng Khí • Thuận Khởi Sự
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenAuth("account");
+                      }}
+                      className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
+                    >
+                      <LogIn className="w-3.5 h-3.5 text-slate-950" />
+                      <span>Đăng Nhập Để Biết</span>
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-950" />
+                    </button>
+                  </div>
+                </div>
+              ) : !hasAstroImage ? (
+                /* 2. KHI ĐÃ ĐĂNG NHẬP NHƯNG CHƯA CÓ 1 TRONG 2 ẢNH: CẦN TẢI ẢNH ĐỂ BẮT ĐẦU PHÂN TÍCH */
+                <div className="md:col-span-7 rounded-2xl bg-gradient-to-br from-amber-500/10 via-indigo-950/40 to-purple-950/30 border border-amber-400/40 p-4 sm:p-5 flex flex-col justify-between space-y-3 backdrop-blur-md relative overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-amber-400" />
+                      <span className="text-xs font-bold font-cinzel text-amber-300 uppercase tracking-wider">
+                        Chỉ Số Năng Lượng & Cát Hung
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                      <FileImage className="w-3 h-3 text-amber-400" />
+                      Cần 1 trong 2 ảnh lá số
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-3xl sm:text-4xl font-extrabold text-amber-300/60 font-cinzel tracking-wider">
+                          ??<span className="text-sm font-normal text-amber-400/40">/100</span>
+                        </span>
+                        <div>
+                          <div className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
+                            <span>Cần Tải Ảnh Để Khởi Động Phân Tích</span>
+                          </div>
+                          <p className="text-[11px] text-amber-300/90 font-medium">
+                            Chào {currentUser.name || "bạn"}, hệ thống cần hình ảnh tinh bàn của bạn
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-[11px] text-slate-400">
-                        Tâm thế sáng suốt, nhân duyên hài hòa
+
+                      {/* Status of both images */}
+                      <div className="grid grid-cols-2 gap-1.5 text-[10px] sm:min-w-[200px]">
+                        <div className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-center">
+                          <div className="text-slate-400 text-[9px]">Lá Số Tử Vi</div>
+                          <div className="font-semibold text-amber-400/80">Chưa tải ảnh</div>
+                        </div>
+                        <div className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-center">
+                          <div className="text-slate-400 text-[9px]">Bản Đồ Sao</div>
+                          <div className="font-semibold text-indigo-400/80">Chưa tải ảnh</div>
+                        </div>
                       </div>
+                    </div>
+
+                    <p className="text-xs text-slate-300 leading-relaxed font-light">
+                      Để AI bắt đầu phân tích năng lượng và tính toán điểm số cát hung hôm nay bám sát mệnh, bạn cần tải lên <strong className="text-amber-200 font-semibold">ít nhất một trong hai file ảnh</strong>: <strong className="text-amber-300">Lá số Tử Vi</strong> hoặc <strong className="text-indigo-300">Bản đồ sao</strong>.
+                    </p>
+                  </div>
+
+                  {/* Action Button */}
+                  <div className="pt-2 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                    <span className="text-[11px] text-slate-400 text-center sm:text-left flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      AI sẽ đối chiếu các cung sao & góc chiếu bám sát ảnh
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenAuth("astro");
+                      }}
+                      className="w-full sm:w-auto py-2 px-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-[0.98] cursor-pointer"
+                    >
+                      <UploadCloud className="w-3.5 h-3.5" />
+                      Tải Bản Đồ Sao / Lá Số Tử Vi
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* 3. KHI ĐÃ ĐĂNG NHẬP VÀ ĐÃ CÓ 1 HOẶC CẢ 2 ẢNH: Hiển thị phân tích chỉ số & cát hung cá nhân */
+                <div className="md:col-span-7 rounded-2xl bg-gradient-to-br from-amber-500/10 via-indigo-950/30 to-purple-950/20 border border-amber-400/30 p-4 sm:p-4.5 flex flex-col justify-between space-y-3 backdrop-blur-md">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-amber-400" />
+                      <span className="text-xs font-bold font-cinzel text-amber-300 uppercase tracking-wider">
+                        Chỉ Số Năng Lượng & Cát Hung
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          runDailyAnalysis(true);
+                        }}
+                        disabled={isAnalyzingDaily}
+                        className="px-2 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-[10px] font-medium flex items-center gap-1 transition-all disabled:opacity-50 cursor-pointer"
+                        title="Quán chiếu lại năng lượng và phân tích cát hung"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isAnalyzingDaily ? "animate-spin" : ""}`} />
+                        <span>{isAnalyzingDaily ? "Đang phân tích..." : "Phân tích lại"}</span>
+                      </button>
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                        {dailyMetrics?.statusLabel || "Đại Cát Hanh Thông"}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Profile Association Badge */}
-                  <div className="shrink-0">
-                    {hasBothImages ? (
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-[11px] font-medium">
-                        <Star className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Đã gắn cả 2 ảnh Lá Số & Bản Đồ Sao</span>
+                  {isAnalyzingDaily ? (
+                    <div className="py-6 flex flex-col items-center justify-center space-y-2.5 text-center my-auto">
+                      <div className="flex items-center gap-2 text-amber-300 text-xs font-semibold">
+                        <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
+                        <span>AI đang quán chiếu khí vận & phân tích cát hung...</span>
                       </div>
-                    ) : hasTuVi || hasNatal ? (
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-300 text-[11px] font-medium">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Đã kết hợp 1 ảnh hồ sơ</span>
-                      </div>
-                    ) : (
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-indigo-500/15 border border-indigo-500/35 text-indigo-200 text-[11px] font-medium">
-                        <UploadCloud className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Bấm xem chi tiết & nhận lời khuyên cổ nhân</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                      <p className="text-[11px] text-slate-400 max-w-sm">
+                        Đối chiếu can chi {lunarInfo?.canChiDay}, ngũ hành {lunarInfo?.element} với lá số của {currentUser.name || "bạn"}.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        {/* Big Score */}
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-3xl sm:text-4xl font-extrabold text-amber-200 font-cinzel drop-shadow-sm">
+                            {dailyMetrics?.overallScore || 88}
+                            <span className="text-sm font-normal text-amber-400/70">/100</span>
+                          </span>
+                          <div>
+                            <div className="text-xs font-bold text-slate-100">
+                              {dailyMetrics?.statusLabel || "Vượng Khí • Thuận Khởi Sự"}
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                              {hasBothImages
+                                ? "Đã luận giải bám sát cả Lá số Tử Vi & Bản đồ sao"
+                                : hasTuVi
+                                ? "Đã luận giải bám sát Lá số Tử Vi"
+                                : "Đã luận giải bám sát Bản đồ sao"}
+                            </div>
+                          </div>
+                        </div>
 
-                {/* Ancient Wisdom Quote Teaser */}
-                <div className="pt-2 border-t border-white/10 flex items-start gap-2 text-xs text-amber-200/90 italic">
-                  <Quote className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                  <p className="line-clamp-1">
-                    "Quân tử dĩ thuận đức, tích tiểu dĩ cao đại." — Kinh Dịch (Đúc kết năng lượng ngày)
-                  </p>
+                        {/* Profile Association Badge */}
+                        <div className="shrink-0">
+                          {hasBothImages ? (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-[11px] font-medium">
+                              <Star className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>Đã bám sát 2 ảnh Lá Số</span>
+                            </div>
+                          ) : hasTuVi ? (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-300 text-[11px] font-medium">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Khớp Lá số Tử Vi</span>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-indigo-500/15 border border-indigo-500/35 text-indigo-300 text-[11px] font-medium">
+                              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                              <span>Khớp Bản đồ sao</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Mini score breakdown */}
+                      <div className="grid grid-cols-4 gap-1.5 text-[10px] pt-1">
+                        <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
+                          <div className="text-slate-400">Tài Lộc</div>
+                          <div className="font-bold text-amber-300">{dailyMetrics?.fortuneScore || 92}%</div>
+                        </div>
+                        <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
+                          <div className="text-slate-400">Sự Nghiệp</div>
+                          <div className="font-bold text-sky-300">{dailyMetrics?.careerScore || 85}%</div>
+                        </div>
+                        <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
+                          <div className="text-slate-400">Nhân Duyên</div>
+                          <div className="font-bold text-rose-300">{dailyMetrics?.loveScore || 78}%</div>
+                        </div>
+                        <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
+                          <div className="text-slate-400">Thân Tâm</div>
+                          <div className="font-bold text-emerald-300">{dailyMetrics?.healthScore || 90}%</div>
+                        </div>
+                      </div>
+
+                      {/* Analysis Preview or Wisdom Quote */}
+                      <div className="pt-2 border-t border-white/10 space-y-1">
+                        {dailyReading ? (
+                          <div>
+                            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-300">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Luận giải cát hung hôm nay:</span>
+                            </div>
+                            <p className="line-clamp-2 text-slate-300 text-[11px] leading-relaxed pl-5 mt-0.5 font-light">
+                              {dailyReading.replace(/^[#* \-\n\r\t]+/, "").slice(0, 180)}...
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-2 text-xs text-amber-200/90 italic">
+                            <Quote className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                            <p className="line-clamp-1">
+                              "Quân tử dĩ thuận đức, tích tiểu dĩ cao đại." — Kinh Dịch (Đúc kết năng lượng ngày)
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
-              </div>
+              )}
 
             </div>
           </div>
@@ -489,15 +817,17 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
       </footer>
 
       {/* Personalized Daily Modal (Tử Vi & Chiêm Tinh Năng Lượng Ngày) */}
-      <PersonalizedDailyModal
-        isOpen={isDailyModalOpen}
-        onClose={() => setIsDailyModalOpen(false)}
-        currentUser={currentUser}
-        onOpenUploadAstro={() => {
-          setIsDailyModalOpen(false);
-          onOpenAuth("astro");
-        }}
-      />
+      {currentUser?.isLoggedIn && (
+        <PersonalizedDailyModal
+          isOpen={isDailyModalOpen}
+          onClose={() => setIsDailyModalOpen(false)}
+          currentUser={currentUser}
+          onOpenUploadAstro={() => {
+            setIsDailyModalOpen(false);
+            onOpenAuth("astro");
+          }}
+        />
+      )}
     </motion.div>
   );
 };

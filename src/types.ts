@@ -96,7 +96,14 @@ export interface HistoryItem {
   summary?: string;
   meta?: {
     cards?: { name: string; isReversed: boolean; position: string }[];
-    hexagram?: { name: string; number: number; quote?: { text: string; author: string } };
+    hexagram?: {
+      name: string;
+      number: number;
+      quote?: { text: string; author: string };
+      relatingName?: string;
+      relatingNumber?: number;
+      changingLines?: number[];
+    };
     aspect?: string;
     hasImage?: boolean;
     imageUrl?: string;

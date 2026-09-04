@@ -204,7 +204,7 @@ export default function App() {
                   </AnimatePresence>
                 </div>
 
-                {/* Daily Overview Sidebar (Visible on desktop) */}
+                {/* Daily Overview Sidebar (Hiện ngày tháng cho mọi người; phân tích mở khóa khi đăng nhập) */}
                 <div className="hidden lg:block">
                   <DailyOverviewColumn
                     currentUser={currentUser}
@@ -320,16 +320,18 @@ export default function App() {
         initialProfileTab={authModalInitialTab}
       />
 
-      {/* Global Personalized Daily Modal */}
-      <PersonalizedDailyModal
-        isOpen={isPersonalizedModalOpen}
-        onClose={() => setIsPersonalizedModalOpen(false)}
-        currentUser={currentUser}
-        onOpenUploadAstro={() => {
-          setIsPersonalizedModalOpen(false);
-          handleOpenAuth("astro");
-        }}
-      />
+      {/* Global Personalized Daily Modal (Chỉ khả dụng khi đã đăng nhập) */}
+      {currentUser?.isLoggedIn && (
+        <PersonalizedDailyModal
+          isOpen={isPersonalizedModalOpen}
+          onClose={() => setIsPersonalizedModalOpen(false)}
+          currentUser={currentUser}
+          onOpenUploadAstro={() => {
+            setIsPersonalizedModalOpen(false);
+            handleOpenAuth("astro");
+          }}
+        />
+      )}
     </div>
   );
 }

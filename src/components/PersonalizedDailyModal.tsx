@@ -46,17 +46,33 @@ export const PersonalizedDailyModal: React.FC<PersonalizedDailyModalProps> = ({
   const natalChartImage = currentUser?.astroProfile?.natalChartImageUrl || null;
   const hasBoth = !!tuViImage && !!natalChartImage;
   const hasOne = !!tuViImage || !!natalChartImage;
-  const hasChart = hasBoth || hasOne || !!currentUser?.astroProfile?.birthDate;
+  const hasAstroImage = hasBoth || hasOne;
 
   useEffect(() => {
     if (isOpen) {
       const info = getDailyLunarInfo();
       setLunarInfo(info);
-      fetchDailyPersonalizedEnergy(info);
+      if (currentUser?.isLoggedIn && hasAstroImage) {
+        const cacheKey = `daily_analysis_${currentUser.email || currentUser.id || "user"}_${info.solarDate}`;
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            if (parsed.reading) setReading(parsed.reading);
+            if (parsed.metrics) setMetrics(parsed.metrics);
+            if (parsed.reading && parsed.metrics) return;
+          } catch (e) {}
+        }
+        fetchDailyPersonalizedEnergy(info);
+      } else {
+        setReading(null);
+        setMetrics(null);
+      }
     }
-  }, [isOpen, tuViImage, natalChartImage, currentUser]);
+  }, [isOpen, tuViImage, natalChartImage, currentUser?.isLoggedIn, currentUser?.email, currentUser?.id]);
 
   const fetchDailyPersonalizedEnergy = async (infoOverride?: DailyLunarInfo) => {
+    if (!hasAstroImage) return;
     const info = infoOverride || lunarInfo || getDailyLunarInfo();
     setIsLoading(true);
     try {
@@ -77,6 +93,15 @@ export const PersonalizedDailyModal: React.FC<PersonalizedDailyModalProps> = ({
       if (data.success) {
         if (data.reading) setReading(data.reading);
         if (data.metrics) setMetrics(data.metrics);
+        if (currentUser?.isLoggedIn) {
+          try {
+            const cacheKey = `daily_analysis_${currentUser.email || currentUser.id || "user"}_${info.solarDate}`;
+            localStorage.setItem(
+              cacheKey,
+              JSON.stringify({ reading: data.reading, metrics: data.metrics })
+            );
+          } catch (e) {}
+        }
       }
     } catch (err) {
       console.error("Error fetching personalized daily energy:", err);
@@ -183,22 +208,22 @@ export const PersonalizedDailyModal: React.FC<PersonalizedDailyModalProps> = ({
                     Chỉ Số Cát Hung
                   </span>
                   <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-200 border border-amber-400/30 font-bold">
-                    {metrics?.statusLabel || (hasChart ? "Đại Cát Hanh Thông" : "Thiên Văn Chung")}
+                    {hasAstroImage ? (metrics?.statusLabel || "Đại Cát Hanh Thông") : "Cần 1 Trong 2 Ảnh"}
                   </span>
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl sm:text-3xl font-extrabold text-amber-200 font-cinzel">
-                    {metrics?.overallScore || (hasChart ? 88 : 75)}
+                    {hasAstroImage ? (metrics?.overallScore || 88) : "--"}
                     <span className="text-sm font-normal text-amber-400/70">/100</span>
                   </span>
                   <span className="text-xs text-slate-300 font-medium">
-                    {hasChart ? "Bám Sát Hồ Sơ" : "Khí Vận Ngày Chung"}
+                    {hasAstroImage ? "Bám Sát Hồ Sơ" : "Chưa Bắt Đầu"}
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  {hasChart
+                  {hasAstroImage
                     ? "Tần số năng lượng đã đối chiếu với các cung sao và góc chiếu"
-                    : "Đăng nhập và tải lá số để nhận điểm số cát hung chính xác cho riêng bạn"}
+                    : "Cần tải 1 trong 2 file ảnh (Bản đồ sao / Lá số Tử Vi) để bắt đầu phân tích"}
                 </p>
               </div>
 
@@ -267,8 +292,8 @@ export const PersonalizedDailyModal: React.FC<PersonalizedDailyModalProps> = ({
               </div>
             </div>
 
-            {/* If user has chart: render Concrete Numbers & Metric Gauge Bar */}
-            {hasChart && metrics && (
+            {/* If user has chart image: render Concrete Numbers & Metric Gauge Bar */}
+            {hasAstroImage && metrics && (
               <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-500/[0.08] via-indigo-500/[0.06] to-purple-500/[0.08] border border-amber-400/30 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
                   <div className="flex items-center gap-2">
@@ -370,31 +395,53 @@ export const PersonalizedDailyModal: React.FC<PersonalizedDailyModalProps> = ({
             )}
 
             {/* When NO chart is present: Display friendly guide banner */}
-            {!hasChart && (
+            {!hasAstroImage && (
               <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-amber-600/10 to-indigo-600/10 border border-amber-400/30 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
                 <div className="space-y-1">
                   <div className="font-bold text-amber-300 flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-amber-400" />
-                    <span>Năng Lượng Thiên Văn Chung Của Ngày</span>
+                    <FileImage className="w-4 h-4 text-amber-400" />
+                    <span>Cần 1 trong 2 file ảnh để bắt đầu phân tích</span>
                   </div>
                   <p className="text-slate-300 text-[11px] max-w-xl">
-                    Bạn đang xem bản luận giải thiên văn chung. Để AI bám sát từng cung sao trên lá số của bạn và đưa ra các con số phần trăm cát hung, điểm tài lộc, sự nghiệp chính xác, hãy tải ảnh Lá số Tử Vi hoặc Bản đồ sao.
+                    Hệ thống yêu cầu ảnh <strong>Bản đồ sao</strong> hoặc <strong>Lá số Tử Vi</strong> để AI giải mã các cung sao, tính toán chỉ số cát hung và phân tích năng lượng ngày bám sát mệnh bạn.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={onOpenUploadAstro}
-                  className="px-4 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-400/40 text-xs font-bold whitespace-nowrap transition-all shadow-md flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 text-xs font-bold whitespace-nowrap transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
                 >
-                  <UploadCloud className="w-3.5 h-3.5 text-amber-300" />
-                  <span>Tải Lá Số Ngay</span>
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>Tải Ảnh Ngay</span>
                 </button>
               </div>
             )}
 
             {/* AI Reading Container */}
             <div className="rounded-2xl glass-panel p-5 sm:p-6 space-y-4 border border-white/10 relative">
-              {isLoading ? (
+              {!hasAstroImage ? (
+                <div className="py-12 flex flex-col items-center justify-center space-y-4 text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-400/30 flex items-center justify-center text-amber-400 shadow-xl">
+                    <FileImage className="w-8 h-8" />
+                  </div>
+                  <div className="space-y-1 max-w-md">
+                    <h4 className="text-sm font-bold text-amber-200 font-cinzel">
+                      Cần Tải 1 Trong 2 File Ảnh Để Bắt Đầu
+                    </h4>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Để nhận bản luận giải năng lượng và điểm số cát hung hôm nay, bạn vui lòng tải lên ảnh <strong>Lá số Tử Vi</strong> hoặc <strong>Bản đồ sao</strong> cá nhân.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onOpenUploadAstro}
+                    className="mt-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg transition-all cursor-pointer"
+                  >
+                    <UploadCloud className="w-4 h-4" />
+                    <span>Tải Bản Đồ Sao / Lá Số Tử Vi</span>
+                  </button>
+                </div>
+              ) : isLoading ? (
                 <div className="py-16 flex flex-col items-center justify-center space-y-4 text-center">
                   <div className="relative">
                     <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400 shadow-xl animate-pulse">
@@ -421,7 +468,7 @@ export const PersonalizedDailyModal: React.FC<PersonalizedDailyModalProps> = ({
                     <button
                       type="button"
                       onClick={handleCopy}
-                      className="px-3 py-1.5 rounded-lg glass-card hover:bg-white/10 text-slate-300 hover:text-amber-300 text-xs font-medium flex items-center gap-1.5 transition-colors"
+                      className="px-3 py-1.5 rounded-lg glass-card hover:bg-white/10 text-slate-300 hover:text-amber-300 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
                       {copied ? (
                         <>

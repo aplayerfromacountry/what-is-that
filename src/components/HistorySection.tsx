@@ -713,9 +713,28 @@ export const HistorySection: React.FC<HistorySectionProps> = ({
                 </div>
               )}
 
-              {selectedItem.meta?.hexagram?.quote && (
-                <div className="p-3 rounded-xl glass-card text-xs italic text-amber-200 border-amber-400/30">
-                  "{selectedItem.meta.hexagram.quote.text}" — <strong>{selectedItem.meta.hexagram.quote.author}</strong>
+              {selectedItem.meta?.hexagram && (
+                <div className="p-3 rounded-xl glass-card space-y-2 border-amber-400/30">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-400/30 text-amber-200 text-xs font-semibold">
+                      Quẻ Chủ: {selectedItem.meta.hexagram.name} (Quẻ {selectedItem.meta.hexagram.number}/64)
+                    </span>
+                    {selectedItem.meta.hexagram.relatingName && (
+                      <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 border border-rose-400/30 text-rose-200 text-xs font-semibold">
+                        Quẻ Biến: {selectedItem.meta.hexagram.relatingName}
+                      </span>
+                    )}
+                    {selectedItem.meta.hexagram.changingLines && selectedItem.meta.hexagram.changingLines.length > 0 && (
+                      <span className="text-[11px] text-amber-300">
+                        Động: {selectedItem.meta.hexagram.changingLines.map((l) => `Hào ${l}`).join(", ")}
+                      </span>
+                    )}
+                  </div>
+                  {selectedItem.meta.hexagram.quote && (
+                    <div className="text-xs italic text-amber-200/90 pt-1 border-t border-white/10">
+                      "{selectedItem.meta.hexagram.quote.text}" — <strong>{selectedItem.meta.hexagram.quote.author}</strong>
+                    </div>
+                  )}
                 </div>
               )}
 
