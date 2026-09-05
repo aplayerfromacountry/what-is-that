@@ -24,12 +24,15 @@ import {
   Users,
   AlertCircle,
   Sliders,
+  Cloud,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, AstrologicalProfile } from "../types";
 import { clearLocalHistoryOnLogout, syncUserHistoryFromServer } from "../utils/historyStorage";
 import { getShootingStarsEnabled, setShootingStarsEnabled } from "../utils/settingsStorage";
 import { AdminUsersView } from "./AdminUsersView";
+import { googleSignIn, firebaseLogout, auth } from "../firebase";
+import { saveUserProfileToFirestore, saveAstroChartToFirestore } from "../utils/firebaseSync";
 
 export type { UserProfile, AstrologicalProfile };
 
@@ -39,6 +42,7 @@ interface AuthModalProps {
   currentUser: UserProfile | null;
   onUpdateUser: (user: UserProfile | null) => void;
   initialProfileTab?: "account" | "astro" | "admin";
+  onOpenDriveManager?: () => void;
 }
 
 const AUTH_STORAGE_KEY = "a_private_place_user_session";
@@ -168,6 +172,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   currentUser,
   onUpdateUser,
   initialProfileTab = "account",
+  onOpenDriveManager,
 }) => {
   const [tab, setTab] = useState<"login" | "register">("login");
   const [profileTab, setProfileTab] = useState<"account" | "astro" | "admin">(initialProfileTab);
@@ -396,11 +401,60 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
+  // Google Sign-In handler with Firebase & Drive scope
+  const handleGoogleSignIn = async () => {
+    setErrorMsg("");
+    setSuccessMsg("");
+    setIsSubmitting(true);
+    try {
+      const res = await googleSignIn();
+      if (res && res.user) {
+        const u = res.user;
+        const userObj: UserProfile = {
+          id: u.uid,
+          name: u.displayName || u.email?.split("@")[0] || "Bạn Tri Kỷ",
+          email: u.email || "",
+          isLoggedIn: true,
+          role: "user",
+          createdAt: new Date().toISOString(),
+          lastLogin: new Date().toISOString(),
+        };
+        try {
+          await saveUserProfileToFirestore(userObj);
+        } catch (e) {
+          console.warn("Could not save to firestore:", e);
+        }
+        saveStoredUser(userObj);
+        onUpdateUser(userObj);
+        syncUserHistoryFromServer(userObj.email || userObj.id);
+        setSuccessMsg("Đăng nhập bằng tài khoản Google thành công!");
+        setTimeout(() => {
+          onClose();
+        }, 800);
+      }
+    } catch (err: any) {
+      console.error("Google sign in error:", err);
+      if (err?.code === "auth/popup-closed-by-user") {
+        setErrorMsg("Bạn đã đóng cửa sổ đăng nhập Google.");
+      } else {
+        setErrorMsg(`Đăng nhập Google thất bại: ${err?.message || "Vui lòng thử lại"}`);
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   // Logout handler: Wipe local session & local history completely with no trace left on device, while keeping server cloud history safe!
-  const handleLogout = () => {
+  const handleLogout = async () => {
     // 1. Wipe local history without deleting cloud database
     clearLocalHistoryOnLogout();
-    // 2. Clear user session
+    // 2. Sign out of Firebase
+    try {
+      await firebaseLogout();
+    } catch (e) {
+      console.warn("Firebase signout error:", e);
+    }
+    // 3. Clear user session
     saveStoredUser(null);
     onUpdateUser(null);
     onClose();
@@ -435,7 +489,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     saveStoredUser(updatedUser);
     onUpdateUser(updatedUser);
 
-    // Sync with server
+    // Sync with server API
     try {
       await fetch("/api/auth/profile", {
         method: "POST",
@@ -450,11 +504,56 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       console.warn("Could not sync profile to server:", e);
     }
 
+    // Sync with Firebase Firestore for Cross-Device Persistence
+    try {
+      await saveUserProfileToFirestore(updatedUser);
+
+      const activeUid = auth.currentUser?.uid || currentUser.id || currentUser.email;
+      if (activeUid) {
+        if (newAstro.tuViImageUrl) {
+          await saveAstroChartToFirestore(activeUid, {
+            id: "chart_tu_vi_profile",
+            userId: activeUid,
+            type: "tu-vi",
+            title: `Lá Số Tử Vi - ${updatedUser.name}`,
+            fullName: newAstro.fullName,
+            birthDate: newAstro.birthDate,
+            birthHour: newAstro.birthHour,
+            calendarType: newAstro.calendarType,
+            gender: newAstro.gender,
+            birthPlace: newAstro.birthPlace,
+            chartImageUrl: newAstro.tuViImageUrl,
+            notes: "Lá số tử vi được gắn vào hồ sơ tài khoản",
+            updatedAt: Date.now(),
+          });
+        }
+        if (newAstro.natalChartImageUrl) {
+          await saveAstroChartToFirestore(activeUid, {
+            id: "chart_natal_chart_profile",
+            userId: activeUid,
+            type: "natal-chart",
+            title: `Bản Đồ Sao - ${updatedUser.name}`,
+            fullName: newAstro.fullName,
+            birthDate: newAstro.birthDate,
+            birthHour: newAstro.birthHour,
+            calendarType: newAstro.calendarType,
+            gender: newAstro.gender,
+            birthPlace: newAstro.birthPlace,
+            chartImageUrl: newAstro.natalChartImageUrl,
+            notes: "Bản đồ sao chiêm tinh gắn vào hồ sơ tài khoản",
+            updatedAt: Date.now(),
+          });
+        }
+      }
+    } catch (fbErr) {
+      console.warn("Could not sync profile to Firestore:", fbErr);
+    }
+
     setIsSubmitting(false);
-    setSuccessMsg("Đã lưu hồ sơ lá số & ảnh cá nhân vào tài khoản!");
+    setSuccessMsg("Đã lưu hồ sơ lá số & ảnh cá nhân lên Firebase & Đám Mây an toàn!");
     setTimeout(() => {
       setSuccessMsg("");
-    }, 3000);
+    }, 3500);
   };
 
   const isAdminUser = currentUser?.isAdmin || currentUser?.email === "aha@aha.com";
@@ -946,7 +1045,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </div>
                 </div>
 
-                <div className="pt-2">
+                <div className="pt-2 space-y-2">
                   <button
                     type="submit"
                     disabled={isSubmitting}
@@ -954,9 +1053,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   >
                     <Save className="w-3.5 h-3.5" />
                     <span>
-                      {isSubmitting ? "Đang lưu..." : "Lưu Hồ Sơ & Ảnh Vào Tài Khoản"}
+                      {isSubmitting ? "Đang lưu..." : "Lưu Hồ Sơ & Ảnh Vào Firebase / Tài Khoản"}
                     </span>
                   </button>
+
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-amber-200">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>Được lưu an toàn trên Firebase. Chuyển thiết bị không lo mất dữ liệu!</span>
+                    </div>
+                    {onOpenDriveManager && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onOpenDriveManager();
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-white font-medium flex items-center gap-1 shrink-0 border border-white/10 transition-colors"
+                      >
+                        <Cloud className="w-3 h-3 text-amber-300" />
+                        <span>Sao lưu Google Drive</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </form>
             )}

@@ -6,6 +6,18 @@
  * - Full cloud synchronization via backend API so uploaded songs are preserved when switching devices
  */
 
+import { auth } from "../firebase";
+import {
+  saveMusicTrackToFirestore,
+  deleteMusicTrackFromFirestore,
+  logDriveBackupToFirestore,
+} from "./firebaseSync";
+import {
+  uploadMusicTrackToDrive,
+  listDriveMusicTracks,
+  downloadDriveAudioBlob,
+} from "./googleDriveService";
+
 export interface StoredTrackRecord {
   id: string;
   userId: string;
@@ -16,6 +28,8 @@ export interface StoredTrackRecord {
   duration: number;
   fileSize: string;
   createdAt: number;
+  driveFileId?: string;
+  driveUrl?: string;
 }
 
 export interface UserTrackItem {
@@ -27,6 +41,8 @@ export interface UserTrackItem {
   fileSize?: string;
   createdAt?: number;
   isSynced?: boolean;
+  driveFileId?: string;
+  driveUrl?: string;
 }
 
 const DB_NAME = "a_private_place_music_db";
@@ -144,6 +160,14 @@ export async function getLocalTracks(userId: string): Promise<{ items: UserTrack
     console.error("Failed to get local tracks for user:", userId, error);
     return { items: [], records: [] };
   }
+}
+
+/**
+ * Convenience helper to get array of playable tracks for a user
+ */
+export async function getTracksForUser(userId: string): Promise<UserTrackItem[]> {
+  const { items } = await getLocalTracks(userId.trim().toLowerCase());
+  return items;
 }
 
 /**
@@ -276,6 +300,23 @@ async function uploadLocalTracksToServer(userId: string, records: StoredTrackRec
         tracks: payloadTracks,
       }),
     });
+
+    if (auth.currentUser) {
+      records.forEach((r) => {
+        saveMusicTrackToFirestore(auth.currentUser!.uid, {
+          id: r.id,
+          userId: auth.currentUser!.uid,
+          title: r.title,
+          artist: r.artist,
+          duration: r.duration,
+          fileSize: r.fileSize,
+          mimeType: r.mimeType,
+          driveFileId: r.driveFileId,
+          driveUrl: r.driveUrl,
+          createdAt: r.createdAt,
+        }).catch((err) => console.warn("Sync to Firestore:", err));
+      });
+    }
   } catch (e) {
     console.warn("Background upload to cloud failed:", e);
   }
@@ -343,6 +384,7 @@ export async function saveTracksForUser(
       try {
         for (const t of tracks) {
           const base64 = await blobToBase64(t.file);
+          const sizeFormatted = t.fileSize || `${(t.file.size / (1024 * 1024)).toFixed(1)} MB`;
           serverPayloadTracks.push({
             id: t.id,
             title: t.title,
@@ -350,9 +392,23 @@ export async function saveTracksForUser(
             audioData: base64,
             mimeType: t.file.type || "audio/mpeg",
             duration: t.duration || 0,
-            fileSize: t.fileSize || `${(t.file.size / (1024 * 1024)).toFixed(1)} MB`,
+            fileSize: sizeFormatted,
             createdAt: Date.now(),
           });
+
+          // Sync metadata with Firebase Firestore if user is authenticated
+          if (auth.currentUser) {
+            saveMusicTrackToFirestore(auth.currentUser.uid, {
+              id: t.id,
+              userId: auth.currentUser.uid,
+              title: t.title,
+              artist: t.artist || "Nhạc của bạn",
+              duration: t.duration || 0,
+              fileSize: sizeFormatted,
+              mimeType: t.file.type || "audio/mpeg",
+              createdAt: Date.now(),
+            }).catch((err) => console.warn("Firestore music track sync:", err));
+          }
         }
 
         await fetch("/api/music/upload", {
@@ -422,6 +478,13 @@ export async function deleteTrackForUser(userId: string, trackId: string): Promi
     fetch(`/api/music/track/${encodeURIComponent(normalizedId)}/${encodeURIComponent(trackId)}`, {
       method: "DELETE",
     }).catch((e) => console.warn("Cloud delete track failed:", e));
+
+    // Also delete from Firestore if authenticated
+    if (auth.currentUser) {
+      deleteMusicTrackFromFirestore(auth.currentUser.uid, trackId).catch((err) =>
+        console.warn("Firestore music track delete error:", err)
+      );
+    }
   } catch (error) {
     console.error("Failed to delete track:", trackId, error);
   }
@@ -459,3 +522,169 @@ export async function clearAllTracksForUser(userId: string): Promise<void> {
     console.error("Failed to clear tracks for user:", normalizedId, error);
   }
 }
+
+// =========================================================================
+// Google Drive Music Backup & Restore Helpers
+// =========================================================================
+
+/**
+ * Backs up all user's local music files to Google Drive (folder: "Nhạc Thiền & Thư Giãn")
+ */
+export async function backupMusicTracksToGoogleDrive(
+  accessToken: string,
+  userId: string
+): Promise<{ uploaded: number; total: number; skipped: number }> {
+  const normalizedId = userId.trim().toLowerCase();
+  const db = await openDB();
+
+  const records: StoredTrackRecord[] = await new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, "readonly");
+    const store = transaction.objectStore(STORE_NAME);
+    const index = store.index("userId");
+    const request = index.getAll(IDBKeyRange.only(normalizedId));
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+
+  if (records.length === 0) {
+    return { uploaded: 0, total: 0, skipped: 0 };
+  }
+
+  let uploadedCount = 0;
+  let skippedCount = 0;
+
+  for (const track of records) {
+    try {
+      // Upload audio blob to Drive
+      const driveFile = await uploadMusicTrackToDrive(
+        accessToken,
+        track.title,
+        track.artist,
+        track.audioBlob,
+        track.mimeType || "audio/mpeg"
+      );
+
+      // Update record with Drive ID in IndexedDB
+      track.driveFileId = driveFile.id;
+      track.driveUrl = driveFile.webViewLink;
+
+      await new Promise<void>((res) => {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const s = tx.objectStore(STORE_NAME);
+        s.put(track);
+        tx.oncomplete = () => res();
+      });
+
+      // Log backup to Firestore
+      if (auth.currentUser) {
+        logDriveBackupToFirestore(auth.currentUser.uid, {
+          id: `backup-music-${track.id}-${Date.now()}`,
+          driveFileId: driveFile.id,
+          fileName: driveFile.name,
+          backupType: "music",
+          webViewLink: driveFile.webViewLink,
+        }).catch((e) => console.warn("Log music drive backup to Firestore:", e));
+
+        saveMusicTrackToFirestore(auth.currentUser.uid, {
+          id: track.id,
+          userId: auth.currentUser.uid,
+          title: track.title,
+          artist: track.artist,
+          duration: track.duration,
+          fileSize: track.fileSize,
+          mimeType: track.mimeType,
+          driveFileId: driveFile.id,
+          driveUrl: driveFile.webViewLink,
+          createdAt: track.createdAt,
+        }).catch((e) => console.warn("Save music metadata to Firestore:", e));
+      }
+
+      uploadedCount++;
+    } catch (err) {
+      console.error(`Failed to upload track "${track.title}" to Google Drive:`, err);
+      skippedCount++;
+    }
+  }
+
+  return { uploaded: uploadedCount, total: records.length, skipped: skippedCount };
+}
+
+/**
+ * Restores music tracks from Google Drive to local storage (for new devices)
+ */
+export async function restoreMusicTracksFromGoogleDrive(
+  accessToken: string,
+  userId: string
+): Promise<UserTrackItem[]> {
+  const normalizedId = userId.trim().toLowerCase();
+  const driveFiles = await listDriveMusicTracks(accessToken);
+
+  if (driveFiles.length === 0) return [];
+
+  const existingLocal = await getTracksForUser(normalizedId);
+  const existingTitles = new Set(existingLocal.map((t) => t.title.toLowerCase().trim()));
+
+  const restoredTracks: UserTrackItem[] = [];
+
+  for (const file of driveFiles) {
+    // Extract title from file name: e.g. "[Nhac]_Giai_Dieu_Binh_Yen.mp3" -> "Giai Dieu Binh Yen"
+    let rawTitle = file.name.replace(/^\[Nhac\]_?/i, "").replace(/\.[^/.]+$/, "");
+    rawTitle = rawTitle.replace(/_/g, " ");
+
+    if (existingTitles.has(rawTitle.toLowerCase().trim())) {
+      continue; // already in local cache
+    }
+
+    try {
+      const audioBlob = await downloadDriveAudioBlob(accessToken, file.id);
+      const trackId = `track-drive-${file.id.slice(0, 12)}`;
+      const sizeFormatted = file.size
+        ? `${(parseInt(file.size, 10) / (1024 * 1024)).toFixed(1)} MB`
+        : `${(audioBlob.size / (1024 * 1024)).toFixed(1)} MB`;
+
+      const record: StoredTrackRecord = {
+        id: trackId,
+        userId: normalizedId,
+        title: rawTitle,
+        artist: "Đồng bộ từ Google Drive",
+        audioBlob,
+        mimeType: file.mimeType || "audio/mpeg",
+        duration: 0,
+        fileSize: sizeFormatted,
+        createdAt: file.modifiedTime ? new Date(file.modifiedTime).getTime() : Date.now(),
+        driveFileId: file.id,
+        driveUrl: file.webViewLink,
+      };
+
+      const db = await openDB();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const s = tx.objectStore(STORE_NAME);
+        s.put(record);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+
+      const objectUrl = URL.createObjectURL(audioBlob);
+      restoredTracks.push({
+        id: trackId,
+        title: rawTitle,
+        artist: "Đồng bộ từ Google Drive",
+        src: objectUrl,
+        duration: 0,
+        fileSize: sizeFormatted,
+        createdAt: record.createdAt,
+        isSynced: true,
+        driveFileId: file.id,
+        driveUrl: file.webViewLink,
+      });
+
+      existingTitles.add(rawTitle.toLowerCase().trim());
+    } catch (e) {
+      console.warn(`Could not restore file ${file.name} from Google Drive:`, e);
+    }
+  }
+
+  return restoredTracks;
+}
+

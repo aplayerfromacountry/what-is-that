@@ -58,9 +58,13 @@ export const PersonalizedDailyModal: React.FC<PersonalizedDailyModalProps> = ({
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
-            if (parsed.reading) setReading(parsed.reading);
-            if (parsed.metrics) setMetrics(parsed.metrics);
-            if (parsed.reading && parsed.metrics) return;
+            if (parsed?.metrics?.overallScore === 88 && parsed?.metrics?.fortuneScore === 92) {
+              localStorage.removeItem(cacheKey);
+            } else {
+              if (parsed.reading) setReading(parsed.reading);
+              if (parsed.metrics) setMetrics(parsed.metrics);
+              if (parsed.reading && parsed.metrics) return;
+            }
           } catch (e) {}
         }
         fetchDailyPersonalizedEnergy(info);
@@ -212,10 +216,16 @@ export const PersonalizedDailyModal: React.FC<PersonalizedDailyModalProps> = ({
                   </span>
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-2xl sm:text-3xl font-extrabold text-amber-200 font-cinzel">
-                    {hasAstroImage ? (metrics?.overallScore || 88) : "--"}
-                    <span className="text-sm font-normal text-amber-400/70">/100</span>
-                  </span>
+                  {hasAstroImage && typeof metrics?.overallScore === "number" ? (
+                    <span className="text-2xl sm:text-3xl font-extrabold text-amber-200 font-cinzel">
+                      {metrics.overallScore}
+                      <span className="text-sm font-normal text-amber-400/70">/100</span>
+                    </span>
+                  ) : (
+                    <span className="text-xl sm:text-2xl font-bold text-amber-300">
+                      {hasAstroImage ? (metrics?.statusLabel || "Định Tính") : "--"}
+                    </span>
+                  )}
                   <span className="text-xs text-slate-300 font-medium">
                     {hasAstroImage ? "Bám Sát Hồ Sơ" : "Chưa Bắt Đầu"}
                   </span>
@@ -292,75 +302,83 @@ export const PersonalizedDailyModal: React.FC<PersonalizedDailyModalProps> = ({
               </div>
             </div>
 
-            {/* If user has chart image: render Concrete Numbers & Metric Gauge Bar */}
+            {/* If user has chart image: render Concrete Numbers or Qualitative Card */}
             {hasAstroImage && metrics && (
               <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-amber-500/[0.08] via-indigo-500/[0.06] to-purple-500/[0.08] border border-amber-400/30 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
                   <div className="flex items-center gap-2">
                     <Zap className="w-4 h-4 text-amber-400" />
                     <h3 className="text-xs sm:text-sm font-bold text-amber-300 uppercase tracking-wider font-cinzel">
-                      Bảng Con Số Năng Lượng Cá Nhân Hóa (Bám Sát Lá Số)
+                      {typeof metrics.overallScore === "number" ? "Bảng Con Số Năng Lượng Cá Nhân Hóa" : "Luận Giải Khí Vận Bám Sát Lá Số"}
                     </h3>
                   </div>
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-400/20 text-amber-200 border border-amber-400/40">
-                    Xác suất thành công: {metrics.successProbability}%
-                  </span>
+                  {typeof metrics.successProbability === "number" && (
+                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-400/20 text-amber-200 border border-amber-400/40">
+                      Xác suất thành công: {metrics.successProbability}%
+                    </span>
+                  )}
                 </div>
 
-                {/* Metric Bars */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="p-3 rounded-xl bg-black/40 border border-white/10 space-y-1.5">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-300 font-medium">Tài Lộc & KD</span>
-                      <span className="text-amber-300 font-extrabold">{metrics.fortuneScore}/100</span>
+                {/* Metric Bars - CHỈ HIỆN KHI AI XÁC ĐỊNH ĐƯỢC CON SỐ THỰC TẾ, BỎ HẲN NẾU LÀ NULL */}
+                {typeof metrics.fortuneScore === "number" && typeof metrics.careerScore === "number" ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-xl bg-black/40 border border-white/10 space-y-1.5">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-300 font-medium">Tài Lộc & KD</span>
+                        <span className="text-amber-300 font-extrabold">{metrics.fortuneScore}/100</span>
+                      </div>
+                      <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-amber-500 to-yellow-300 h-full rounded-full transition-all duration-700"
+                          style={{ width: `${metrics.fortuneScore}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-gradient-to-r from-amber-500 to-yellow-300 h-full rounded-full transition-all duration-700"
-                        style={{ width: `${metrics.fortuneScore}%` }}
-                      />
-                    </div>
-                  </div>
 
-                  <div className="p-3 rounded-xl bg-black/40 border border-white/10 space-y-1.5">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-300 font-medium">Sự Nghiệp</span>
-                      <span className="text-sky-300 font-extrabold">{metrics.careerScore}/100</span>
+                    <div className="p-3 rounded-xl bg-black/40 border border-white/10 space-y-1.5">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-300 font-medium">Sự Nghiệp</span>
+                        <span className="text-sky-300 font-extrabold">{metrics.careerScore}/100</span>
+                      </div>
+                      <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-sky-500 to-cyan-300 h-full rounded-full transition-all duration-700"
+                          style={{ width: `${metrics.careerScore}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-gradient-to-r from-sky-500 to-cyan-300 h-full rounded-full transition-all duration-700"
-                        style={{ width: `${metrics.careerScore}%` }}
-                      />
-                    </div>
-                  </div>
 
-                  <div className="p-3 rounded-xl bg-black/40 border border-white/10 space-y-1.5">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-300 font-medium">Nhân Duyên</span>
-                      <span className="text-rose-300 font-extrabold">{metrics.loveScore}/100</span>
+                    <div className="p-3 rounded-xl bg-black/40 border border-white/10 space-y-1.5">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-300 font-medium">Nhân Duyên</span>
+                        <span className="text-rose-300 font-extrabold">{metrics.loveScore ?? "--"}/100</span>
+                      </div>
+                      <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-rose-500 to-pink-300 h-full rounded-full transition-all duration-700"
+                          style={{ width: `${metrics.loveScore ?? 50}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-gradient-to-r from-rose-500 to-pink-300 h-full rounded-full transition-all duration-700"
-                        style={{ width: `${metrics.loveScore}%` }}
-                      />
-                    </div>
-                  </div>
 
-                  <div className="p-3 rounded-xl bg-black/40 border border-white/10 space-y-1.5">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-300 font-medium">Thân Tâm</span>
-                      <span className="text-emerald-300 font-extrabold">{metrics.healthScore}/100</span>
-                    </div>
-                    <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-gradient-to-r from-emerald-500 to-teal-300 h-full rounded-full transition-all duration-700"
-                        style={{ width: `${metrics.healthScore}%` }}
-                      />
+                    <div className="p-3 rounded-xl bg-black/40 border border-white/10 space-y-1.5">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-300 font-medium">Thân Tâm</span>
+                        <span className="text-emerald-300 font-extrabold">{metrics.healthScore ?? "--"}/100</span>
+                      </div>
+                      <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-emerald-500 to-teal-300 h-full rounded-full transition-all duration-700"
+                          style={{ width: `${metrics.healthScore ?? 50}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-black/40 border border-white/10 text-xs text-slate-300 leading-relaxed font-light">
+                    <p>{metrics.reasoning || "AI tập trung phân tích luận giải khí vận định tính bám sát các cung sao và góc chiếu, bỏ qua việc gán điểm số định lượng để đảm bảo tính chuẩn xác."}</p>
+                  </div>
+                )}
 
                 {/* Additional Specific Metrics: Hours & Numbers */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 text-xs">

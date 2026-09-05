@@ -6,6 +6,7 @@ import { NatalChartSection } from "./components/NatalChartSection";
 import { TarotSection } from "./components/TarotSection";
 import { KinhDichSection } from "./components/KinhDichSection";
 import { HistorySection } from "./components/HistorySection";
+import { PlantDiarySection } from "./components/PlantDiarySection";
 import { EntranceScreen } from "./components/EntranceScreen";
 import { HubSelectionScreen } from "./components/HubSelectionScreen";
 import { MusicPlayer } from "./components/MusicPlayer";
@@ -196,6 +197,12 @@ export default function App() {
                             setActiveTab(type);
                           }}
                           onHistoryChanged={refreshHistoryCount}
+                          currentUser={currentUser}
+                          onOpenAuth={() => setIsAuthModalOpen(true)}
+                        />
+                      )}
+                      {activeTab === "plant-diary" && (
+                        <PlantDiarySection
                           currentUser={currentUser}
                           onOpenAuth={() => setIsAuthModalOpen(true)}
                         />

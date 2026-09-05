@@ -63,20 +63,101 @@ NGUYÊN TẮC BẮT BUỘC VỀ CHẤT LƯỢNG LUẬN GIẢI (STRICT NON-NEGOTI
 `;
 
 /**
+ * Safely parse an image input (data URL, raw base64, or remote URL) into a Gemini Part with inlineData.
+ * Returns null if the image cannot be resolved or is invalid, preventing INVALID_ARGUMENT errors.
+ */
+async function parseImageToInlineDataPart(
+  imageInput?: string | null,
+  fallbackMime: string = "image/jpeg"
+): Promise<{ inlineData: { mimeType: string; data: string } } | null> {
+  if (!imageInput || typeof imageInput !== "string") return null;
+  const trimmed = imageInput.trim();
+  if (!trimmed || trimmed.length < 20) return null;
+
+  try {
+    // 1. If it's a data URL: data:image/png;base64,....
+    if (trimmed.startsWith("data:")) {
+      const mimeMatch = trimmed.match(/^data:([^;]+);base64,/i);
+      const mimeType = mimeMatch ? mimeMatch[1].trim() : fallbackMime;
+      const cleanData = trimmed.replace(/^data:[^;]+;base64,/i, "").replace(/\s+/g, "");
+      // Validate that base64 data exists and matches base64 characters
+      if (cleanData.length > 50 && /^[A-Za-z0-9+/=_\-]+$/.test(cleanData.slice(0, 100))) {
+        return {
+          inlineData: {
+            mimeType,
+            data: cleanData,
+          },
+        };
+      }
+      return null;
+    }
+
+    // 2. If it's a remote URL (http:// or https://)
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
+      try {
+        const resp = await fetch(trimmed, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (resp.ok) {
+          const contentType = resp.headers.get("content-type") || fallbackMime;
+          const arrayBuffer = await resp.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const base64 = buffer.toString("base64");
+          if (base64.length > 50) {
+            return {
+              inlineData: {
+                mimeType: contentType.split(";")[0].trim() || fallbackMime,
+                data: base64,
+              },
+            };
+          }
+        }
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        console.warn("[Image Loader] Could not fetch remote image:", fetchErr);
+      }
+      return null;
+    }
+
+    // 3. If it's already a raw base64 string
+    const cleanRaw = trimmed.replace(/\s+/g, "");
+    if (cleanRaw.length > 50 && /^[A-Za-z0-9+/=_\-]+$/.test(cleanRaw.slice(0, 100))) {
+      return {
+        inlineData: {
+          mimeType: fallbackMime,
+          data: cleanRaw,
+        },
+      };
+    }
+  } catch (err) {
+    console.warn("[Image Loader] Failed to process image input:", err);
+  }
+
+  return null;
+}
+
+/**
  * Resilient Gemini Content Generator
- * - Primary: gemini-3.7-flash
- * - Fallbacks: gemini-1.5-flash, gemini-1.5-pro
- * - Immediate cascade on 503 (high demand spike) or temporary errors to maintain fast response
+ * - Cascades across reliable models on error or high demand
  */
 async function generateWithRetryAndFallback(
   contentsPayload: any,
   configPayload?: any
 ): Promise<string> {
   const modelsToTry = [
-    "gemini-3.7-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite",
   ];
+
+  // Defensive sanitization of contents payload to avoid invalid protobuf wrapper
+  let sanitizedContents = contentsPayload;
+  if (contentsPayload && typeof contentsPayload === "object") {
+    if (contentsPayload.contents && !contentsPayload.parts && !Array.isArray(contentsPayload)) {
+      sanitizedContents = contentsPayload.contents;
+    }
+  }
 
   let lastError: any = null;
 
@@ -85,7 +166,7 @@ async function generateWithRetryAndFallback(
       const ai = getGenAI();
       const response = await ai.models.generateContent({
         model,
-        contents: contentsPayload,
+        contents: sanitizedContents,
         config: configPayload,
       });
 
@@ -152,19 +233,18 @@ YÊU CẦU BẮT BUỘC VỀ BÀI LUẬN GIẢI:
 Trình bày bằng định dạng Markdown đẹp mắt, văn phong chân thành, ấm áp, đĩnh đạc và uyên bác.`;
 
     let contentsPayload: any;
-    if (imageBase64 && imageMimeType) {
-      const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-      contentsPayload = {
-        parts: [
-          {
-            inlineData: {
-              data: cleanBase64,
-              mimeType: imageMimeType || "image/jpeg",
-            },
-          },
-          { text: prompt },
-        ],
-      };
+    if (imageBase64) {
+      const imagePart = await parseImageToInlineDataPart(imageBase64, imageMimeType || "image/jpeg");
+      if (imagePart) {
+        contentsPayload = {
+          parts: [
+            imagePart,
+            { text: prompt },
+          ],
+        };
+      } else {
+        contentsPayload = prompt;
+      }
     } else {
       contentsPayload = prompt;
     }
@@ -262,19 +342,18 @@ YÊU CẦU BẮT BUỘC VỀ BÀI LUẬN GIẢI:
 Trình bày bằng định dạng Markdown thanh lịch, giàu tri thức và truyền cảm hứng sâu sắc.`;
 
     let contentsPayload: any;
-    if (imageBase64 && imageMimeType) {
-      const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-      contentsPayload = {
-        parts: [
-          {
-            inlineData: {
-              data: cleanBase64,
-              mimeType: imageMimeType || "image/jpeg",
-            },
-          },
-          { text: prompt },
-        ],
-      };
+    if (imageBase64) {
+      const imagePart = await parseImageToInlineDataPart(imageBase64, imageMimeType || "image/jpeg");
+      if (imagePart) {
+        contentsPayload = {
+          parts: [
+            imagePart,
+            { text: prompt },
+          ],
+        };
+      } else {
+        contentsPayload = prompt;
+      }
     } else {
       contentsPayload = prompt;
     }
@@ -541,46 +620,134 @@ Nếu bạn cần tôi phân tích sâu hơn ở bất kỳ chi tiết cụ th�
   }
 });
 
-// Helper to extract or generate deterministic numerical metrics for daily energy
-function extractOrGenerateMetrics(text: string, hasPersonalized: boolean, dateStr: string) {
-  // Try regex matching scores from text if present
-  let overall = 85;
-  let fortune = 88;
-  let career = 82;
-  let love = 80;
-  let health = 86;
-  let success = 84;
+// Helper to strip JSON code block from markdown and extract json
+function cleanJsonBlockFromMarkdown(text: string): { cleanText: string; jsonBlock: any } {
+  const jsonRegex = /```json\s*([\s\S]*?)\s*```/i;
+  const match = text.match(jsonRegex);
+  let jsonBlock: any = null;
+  if (match) {
+    try {
+      jsonBlock = JSON.parse(match[1]);
+    } catch (e) {
+      console.warn("Could not parse JSON block from AI response:", e);
+    }
+  }
+  const cleanText = text.replace(jsonRegex, "").trim();
+  return { cleanText, jsonBlock };
+}
+
+// Helper to extract or parse numerical metrics for daily energy
+// CRITICAL: Must NEVER use canned numbers like 88, 92, 85. If cannot be calculated, omit scores (null) entirely.
+function extractOrGenerateMetrics(text: string, jsonBlock: any, hasPersonalized: boolean, dateStr: string) {
   let supportive = 75;
   let neutral = 20;
   let conflicting = 5;
-  let peakHours = ["08:30 - 10:15", "15:00 - 16:45"];
-  let luckyNumbers = [3, 8, 19, 27];
-  let statusLabel = "Đại Cát Hanh Thông";
+  let peakHours = ["07:00 - 09:00", "13:00 - 15:00"];
+  let luckyNumbers = [3, 8, 16, 28];
 
-  const overallMatch = text.match(/Chỉ\s*Số\s*Năng\s*Lượng\s*(?:Toàn\s*Diện|Tổng\s*Thể)?[^0-9]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*100/i);
-  if (overallMatch) overall = Math.min(100, Math.max(40, parseInt(overallMatch[1], 10)));
+  // 1. Check if AI returned a structured json block with scores
+  if (jsonBlock && typeof jsonBlock === "object") {
+    if (jsonBlock.canDetermineScores === false || jsonBlock.overallScore === null || jsonBlock.overallScore === undefined) {
+      return {
+        canDetermineScores: false,
+        overallScore: null,
+        fortuneScore: null,
+        careerScore: null,
+        loveScore: null,
+        healthScore: null,
+        successProbability: null,
+        elementalHarmonization: { supportive, neutral, conflicting },
+        peakHours,
+        luckyNumbers,
+        statusLabel: jsonBlock.statusLabel || "Luận Giải Khí Vận Mệnh",
+        reasoning: jsonBlock.reasoning || "Tập trung phân tích định tính chuyên sâu (bỏ chấm điểm số do cần thêm căn cứ sao).",
+        hasPersonalizedData: hasPersonalized,
+      };
+    }
 
-  const fortuneMatch = text.match(/Tài\s*Lộc[^0-9]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*100/i);
-  if (fortuneMatch) fortune = Math.min(100, Math.max(40, parseInt(fortuneMatch[1], 10)));
+    if (typeof jsonBlock.overallScore === "number" && !isNaN(jsonBlock.overallScore)) {
+      const overall = Math.min(99, Math.max(30, Math.round(jsonBlock.overallScore)));
+      let statusLabel = jsonBlock.statusLabel;
+      if (!statusLabel) {
+        if (overall >= 82) statusLabel = "Đại Cát Hanh Thông";
+        else if (overall >= 72) statusLabel = "Thượng Cát Cát Lợi";
+        else if (overall >= 60) statusLabel = "Bình Hòa Thuận Khí";
+        else statusLabel = "Thận Trọng Tĩnh Tâm";
+      }
 
-  const careerMatch = text.match(/(?:Công\s*Danh|Sự\s*Nghiệp)[^0-9]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*100/i);
-  if (careerMatch) career = Math.min(100, Math.max(40, parseInt(careerMatch[1], 10)));
+      return {
+        canDetermineScores: true,
+        overallScore: overall,
+        fortuneScore: typeof jsonBlock.fortuneScore === "number" && !isNaN(jsonBlock.fortuneScore) ? Math.min(99, Math.max(30, Math.round(jsonBlock.fortuneScore))) : null,
+        careerScore: typeof jsonBlock.careerScore === "number" && !isNaN(jsonBlock.careerScore) ? Math.min(99, Math.max(30, Math.round(jsonBlock.careerScore))) : null,
+        loveScore: typeof jsonBlock.loveScore === "number" && !isNaN(jsonBlock.loveScore) ? Math.min(99, Math.max(30, Math.round(jsonBlock.loveScore))) : null,
+        healthScore: typeof jsonBlock.healthScore === "number" && !isNaN(jsonBlock.healthScore) ? Math.min(99, Math.max(30, Math.round(jsonBlock.healthScore))) : null,
+        successProbability: typeof jsonBlock.successProbability === "number" && !isNaN(jsonBlock.successProbability) ? Math.min(99, Math.max(30, Math.round(jsonBlock.successProbability))) : null,
+        elementalHarmonization: { supportive, neutral, conflicting },
+        peakHours,
+        luckyNumbers,
+        statusLabel,
+        reasoning: jsonBlock.reasoning || "",
+        hasPersonalizedData: hasPersonalized,
+      };
+    }
+  }
 
-  const loveMatch = text.match(/(?:Tình\s*Cảm|Mối\s*Quan\s*Hệ|Nhân\s*Duyên)[^0-9]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*100/i);
-  if (loveMatch) love = Math.min(100, Math.max(40, parseInt(loveMatch[1], 10)));
+  // 2. Fallback regex search in text (if JSON was missing)
+  // If text mentions cannot determine or no basis:
+  if (/không\s*(?:thể|đủ)\s*(?:xác\s*định|tính\s*toán|dữ\s*liệu)\s*(?:được\s*)?(?:chỉ\s*số|điểm|con\s*số)/i.test(text)) {
+    return {
+      canDetermineScores: false,
+      overallScore: null,
+      fortuneScore: null,
+      careerScore: null,
+      loveScore: null,
+      healthScore: null,
+      successProbability: null,
+      elementalHarmonization: { supportive, neutral, conflicting },
+      peakHours,
+      luckyNumbers,
+      statusLabel: "Luận Giải Khí Vận Mệnh",
+      hasPersonalizedData: hasPersonalized,
+    };
+  }
 
-  const healthMatch = text.match(/(?:Thân\s*Tâm|Trực\s*Giác|Sức\s*Khỏe)[^0-9]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*100/i);
-  if (healthMatch) health = Math.min(100, Math.max(40, parseInt(healthMatch[1], 10)));
+  let overall: number | null = null;
+  let fortune: number | null = null;
+  let career: number | null = null;
+  let love: number | null = null;
+  let health: number | null = null;
+  let success: number | null = null;
 
-  const successMatch = text.match(/(?:Thành\s*Công|Xác\s*Suất)[^0-9]*([0-9]{1,3})\s*%/i);
-  if (successMatch) success = Math.min(100, Math.max(40, parseInt(successMatch[1], 10)));
+  const overallMatch = text.match(/Chỉ\s*Số\s*Năng\s*Lượng\s*(?:Toàn\s*Diện|Tổng\s*Thể)?[^0-9\n\r]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*100/i);
+  if (overallMatch) overall = Math.min(99, Math.max(30, parseInt(overallMatch[1], 10)));
 
-  if (overall >= 88) statusLabel = "Đại Cát Hanh Thông";
-  else if (overall >= 78) statusLabel = "Thượng Cát Cát Lợi";
-  else if (overall >= 65) statusLabel = "Bình Hòa Thuận Khí";
-  else statusLabel = "Thận Trọng Tĩnh Tâm";
+  const fortuneMatch = text.match(/Tài\s*Lộc[^0-9\n\r]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*(?:100|%)/i);
+  if (fortuneMatch) fortune = Math.min(99, Math.max(30, parseInt(fortuneMatch[1], 10)));
+
+  const careerMatch = text.match(/(?:Công\s*Danh|Sự\s*Nghiệp)[^0-9\n\r]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*(?:100|%)/i);
+  if (careerMatch) career = Math.min(99, Math.max(30, parseInt(careerMatch[1], 10)));
+
+  const loveMatch = text.match(/(?:Tình\s*Cảm|Mối\s*Quan\s*Hệ|Nhân\s*Duyên)[^0-9\n\r]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*(?:100|%)/i);
+  if (loveMatch) love = Math.min(99, Math.max(30, parseInt(loveMatch[1], 10)));
+
+  const healthMatch = text.match(/(?:Thân\s*Tâm|Trực\s*Giác|Sức\s*Khỏe)[^0-9\n\r]*([0-9]{1,3})\s*(?:\/|\s*trên\s*)?\s*(?:100|%)/i);
+  if (healthMatch) health = Math.min(99, Math.max(30, parseInt(healthMatch[1], 10)));
+
+  const successMatch = text.match(/(?:Thành\s*Công|Xác\s*Suất)[^0-9\n\r]*([0-9]{1,3})\s*%/i);
+  if (successMatch) success = Math.min(99, Math.max(30, parseInt(successMatch[1], 10)));
+
+  // If no overall score was found, DO NOT INVENT A FAKE NUMBER! Set to null ("bỏ hẳn")
+  let statusLabel = "Luận Giải Khí Vận Mệnh";
+  if (overall !== null) {
+    if (overall >= 82) statusLabel = "Đại Cát Hanh Thông";
+    else if (overall >= 72) statusLabel = "Thượng Cát Cát Lợi";
+    else if (overall >= 60) statusLabel = "Bình Hòa Thuận Khí";
+    else statusLabel = "Thận Trọng Tĩnh Tâm";
+  }
 
   return {
+    canDetermineScores: overall !== null,
     overallScore: overall,
     fortuneScore: fortune,
     careerScore: career,
@@ -622,25 +789,32 @@ ${tuViImage ? "- ĐÃ CÓ ẢNH LÁ SỐ TỬ VI ĐẨU SỐ CỦA BẠN." : ""}
 ${natalChartImage ? "- ĐÃ CÓ ẢNH BẢN ĐỒ SAO CHIÊM TINH CỦA BẠN." : ""}
 ${astroProfile?.fullName ? `- Họ tên trên hồ sơ: ${astroProfile.fullName}, Ngày sinh: ${astroProfile.birthDate || "Đã lưu"}, Giờ: ${astroProfile.birthHour || "Giờ Thìn"}, Cung Hoàng Đạo: ${astroProfile.sunSign || "Sư Tử"}.` : ""}
 
-YÊU CẦU BẮT BUỘC (CRITICAL):
-Vì người bạn ĐÃ CUNG CẤP LÁ SỐ / BẢN ĐỒ SAO, bạn PHẢI BÁM SÁT CHI TIẾT LÁ SỐ VÀ ĐƯA RA CÁC CON SỐ CỤ THỂ, KHÔNG NÓI CHUNG CHUNG:
-1. **BẢNG ĐIỂM CHỈ SỐ NĂNG LƯỢNG CỤ THỂ (0-100 ĐIỂM & %)**:
-   - ⚡ **Chỉ Số Năng Lượng Toàn Diện**: [Điểm số cụ thể ví dụ: 88/100] • [Đại Cát Hanh Thông / Thượng Cát / Bình Hòa / Thận Trọng]
-   - 💰 **Chỉ Số Tài Lộc & Kinh Doanh**: [Điểm số cụ thể ví dụ: 92/100]
-   - 🏆 **Chỉ Số Công Danh & Sự Nghiệp**: [Điểm số cụ thể ví dụ: 85/100]
-   - ❤️ **Chỉ Số Tình Cảm & Mối Quan Hệ**: [Điểm số cụ thể ví dụ: 78/100]
-   - 🧘 **Chỉ Số Thân Tâm & Trực Giác**: [Điểm số cụ thể ví dụ: 90/100]
-   - 🎯 **Tỉ Lệ Cơ Hội Thành Công Của Dự Định Trọng Đại Hôm Nay**: [Tỉ lệ % cụ thể ví dụ: 85%]
-   - ⚖️ **Cân Bằng Ngũ Hành Năng Lượng**: [Ví dụ: 80% Tương Sinh, 15% Tương Hòa, 5% Xung Khắc]
-   - ⏰ **Khung Giờ Hoàng Đạo Vượng Khí Nhất Cho Bản Mệnh**: [Khung giờ cụ thể, ví dụ: 08:30 - 10:15 & 15:00 - 16:45]
-   - 🍀 **Bộ Con Số May Mắn Trợ Mệnh**: [Liệt kê 4 con số cụ thể, ví dụ: 03, 08, 19, 27]
-2. **PHÂN TÍCH GIAO THOA CUNG SAO BÁM SÁT LÁ SỐ CỦA BẠN**:
-   - Phân tích tương tác giữa Cung Mệnh, Cung Quan, Cung Tài hoặc vị trí hành tinh quá cảnh với can chi/ngũ hành ngày hôm nay. Chỉ rõ điểm bứt phá và điểm cẩn trọng.
+YÊU CẦU BẰNG TÂM THỨC CHIÊM TINH SÂU SẮC (CRITICAL):
+1. **SUY NGHĨ THẬT KỸ VỀ CHỈ SỐ NĂNG LƯỢNG**:
+   - Đối chiếu cung sao và mệnh bàn với can chi (${lunarInfo?.canChiDay}) và ngũ hành (${lunarInfo?.element}) của ngày.
+   - TUYỆT ĐỐI KHÔNG LẶP LẠI CON SỐ RẬP KHUÔN (như 88, 92, 85, 78, 90). Mỗi ngày có một trường khí biến thiên riêng (30 - 98 điểm).
+   - NẾU KHÔNG THỂ BIẾT ĐƯỢC HOẶC THIẾU CƠ SỞ XÁC THỰC (ảnh mờ, không rõ sao): BỎ HẲN CÁC CON SỐ ĐIỂM, KHÔNG BỊA SỐ. Đặt canDetermineScores là false, các trường điểm là null.
+2. **PHÂN TÍCH GIAO THOA CUNG SAO BÁM SÁT LÁ SỐ**:
+   - Phân tích tương tác giữa Cung Mệnh, Cung Quan, Cung Tài hoặc vị trí hành tinh với can chi/ngũ hành ngày hôm nay.
 3. **GỢI Ý HÀNH ĐỘNG CỤ THỂ**:
    - Công việc & tài chính; Nhân duyên & giao tiếp; Dưỡng sinh & tĩnh tâm.
 4. **MINH TRIẾT CỔ NHÂN ĐÚC KẾT NĂNG LƯỢNG**:
-   - 1 câu danh ngôn cổ nhân (Kinh Dịch, Lão Tử, Khổng Tử...) và lời bình thực tế.
-
+   - 1 câu danh ngôn cổ nhân (Kinh Dịch, Đạo Đức Kinh...) và lời bình thực tế.
+5. **KHỐI JSON ĐỒNG BỘ Ở CUỐI CÙNG (BẮT BUỘC)**:
+Ở cuối bài viết, đính kèm duy nhất 1 khối json sau:
+\`\`\`json
+{
+  "canDetermineScores": true,
+  "overallScore": 81,
+  "fortuneScore": 76,
+  "careerScore": 84,
+  "loveScore": 70,
+  "healthScore": 88,
+  "successProbability": 80,
+  "statusLabel": "Thượng Cát Cát Lợi",
+  "reasoning": "Tóm tắt cơ sở xác định điểm số hoặc lý do bỏ chấm điểm"
+}
+\`\`\`
 Trình bày rõ ràng, mạch lạc, định dạng Markdown đẹp mắt.`;
     } else {
       // General overview for guest or user without chart
@@ -662,14 +836,29 @@ YÊU CẦU: Vì người dùng CHƯA CUNG CẤP LÁ SỐ CÁ NHÂN, hãy luận 
 4. **Sắc Màu & Con Số May Mắn Chung**: Màu sắc và con số đồng điệu ngũ hành ngày hôm nay.
 5. **Gợi Ý Cá Nhân Hóa**: 1 lời nhắc nhở thân thiện rằng nếu tải lên Lá số Tử Vi hoặc Bản đồ sao, hệ thống sẽ phân tích chính xác từng con số phần trăm cát hung bám sát bản mệnh.
 6. **Minh Triết Tĩnh Tâm**: 1 câu danh ngôn đúc kết sâu sắc.
+7. **KHỐI JSON (Đặt canDetermineScores là false vì chưa có lá số cá nhân)**:
+\`\`\`json
+{
+  "canDetermineScores": false,
+  "overallScore": null,
+  "fortuneScore": null,
+  "careerScore": null,
+  "loveScore": null,
+  "healthScore": null,
+  "successProbability": null,
+  "statusLabel": "Khí Vận Thiên Thời Chung",
+  "reasoning": "Chưa có hồ sơ lá số cá nhân nên không chấm điểm số định lượng"
+}
+\`\`\`
 
 Trình bày tinh gọn, thanh thoát, định dạng Markdown rõ ràng.`;
     }
 
     try {
-      const overviewText = await generateWithRetryAndFallback(prompt);
-      const metrics = extractOrGenerateMetrics(overviewText, hasChart, dateStr);
-      return res.json({ success: true, overview: overviewText, metrics, hasPersonalizedData: hasChart });
+      const rawText = await generateWithRetryAndFallback(prompt);
+      const { cleanText, jsonBlock } = cleanJsonBlockFromMarkdown(rawText);
+      const metrics = extractOrGenerateMetrics(cleanText, jsonBlock, hasChart, dateStr);
+      return res.json({ success: true, overview: cleanText, metrics, hasPersonalizedData: hasChart });
     } catch (apiError: any) {
       console.warn("Gemini API fallback for Daily Overview activated:", apiError?.message);
       const fallbackOverview = `### ☀️ Khí Vận & Năng Lượng Ngày (${dateStr})
@@ -677,16 +866,8 @@ Trình bày tinh gọn, thanh thoát, định dạng Markdown rõ ràng.`;
 
 ---
 
-${hasChart ? `#### 📊 Bảng Điểm Chỉ Số Năng Lượng Bản Mệnh
-- ⚡ **Chỉ Số Năng Lượng Toàn Diện**: **88 / 100 điểm** • **Đại Cát Hanh Thông**
-- 💰 **Chỉ Số Tài Lộc & Kinh Doanh**: **92 / 100 điểm**
-- 🏆 **Chỉ Số Công Danh & Sự Nghiệp**: **85 / 100 điểm**
-- ❤️ **Chỉ Số Tình Cảm & Mối Quan Hệ**: **78 / 100 điểm**
-- 🧘 **Chỉ Số Thân Tâm & Trực Giác**: **90 / 100 điểm**
-- 🎯 **Tỉ Lệ Xác Suất Thành Công Việc Lớn**: **85%**
-- ⏰ **Khung Giờ Hoàng Đạo Vượng Khí**: **08:30 - 10:15 & 15:00 - 16:45**
-- 🍀 **Con Số Cát Tường May Mắn**: **03, 08, 19, 27**` : `#### 1. Khí Vận Chủ Đạo Ngày
-Làn sóng năng lượng ngày hôm nay mang tính chất thanh lọc và hanh thông. Không gian vũ trụ khuyến khích sự tập trung vào chiều sâu công việc, lắng nghe trực giác và gắn kết các mối quan hệ bằng sự chân thành.`}
+#### 1. Khí Vận Chủ Đạo Ngày
+Làn sóng năng lượng ngày hôm nay mang tính chất thanh lọc và hanh thông. Không gian vũ trụ khuyến khích sự tập trung vào chiều sâu công việc, lắng nghe trực giác và gắn kết các mối quan hệ bằng sự chân thành.
 
 #### 2. Gợi Ý Hòa Nhịp Cát Lành
 - **Công việc & Tài lộc**: Thích hợp để rà soát kế hoạch, hoàn thiện các chi tiết còn dang dở và khởi thảo ý tưởng mới.
@@ -699,7 +880,18 @@ Làn sóng năng lượng ngày hôm nay mang tính chất thanh lọc và hanh 
 
 > *"Mỗi ngày mới là một trang giấy trắng, hãy vẽ lên đó lòng biết ơn và niềm an lạc."*`;
 
-      const metrics = extractOrGenerateMetrics(fallbackOverview, hasChart, dateStr);
+      const metrics = {
+        canDetermineScores: false,
+        overallScore: null,
+        fortuneScore: null,
+        careerScore: null,
+        loveScore: null,
+        healthScore: null,
+        successProbability: null,
+        statusLabel: "Bình Hòa Thuận Khí",
+        reasoning: "Luận giải định tính tự nhiên.",
+        hasPersonalizedData: hasChart,
+      };
       return res.json({ success: true, overview: fallbackOverview, metrics, hasPersonalizedData: hasChart });
     }
   } catch (error: any) {
@@ -741,33 +933,48 @@ ${hasTuVi ? "- ĐÃ CÓ ẢNH LÁ SỐ TỬ VI ĐẨU SỐ CÁ NHÂN." : "- Chư
 ${hasNatal ? "- ĐÃ CÓ ẢNH BẢN ĐỒ SAO CHIÊM TINH (NATAL CHART WHEEL)." : "- Chưa gửi ảnh Bản đồ sao."}
 ${astroProfile?.fullName ? `- Thông tin hồ sơ: ${astroProfile.fullName}, Ngày sinh: ${astroProfile.birthDate || "Chưa rõ"}, Cung Hoàng Đạo: ${astroProfile.sunSign || "Sư Tử"}.` : ""}
 
-YÊU CẦU BẮT BUỘC CHO NGƯỜI ĐÃ CÓ LÁ SỐ (CRITICAL):
-Vì người dùng ĐÃ TẢI LÁ SỐ / BẢN ĐỒ SAO, bạn BẮT BUỘC PHẢI BÁM SÁT CHI TIẾT LÁ SỐ VÀ ĐƯA RA CÁC CON SỐ CỤ THỂ:
-1. **I. BẢNG ĐIỂM & CHỈ SỐ NĂNG LƯỢNG NGÀY HÔM NAY (ĐƯA RA CÁC CON SỐ CỤ THỂ)**:
-   - ⚡ **Chỉ Số Năng Lượng Toàn Diện**: [Điểm số chính xác ví dụ: 88/100 điểm] • [Xếp loại: Đại Cát Hanh Thông / Thượng Cát / Bình Hòa / Thận Trọng]
-   - 💰 **Chỉ Số Tài Lộc & Kinh Doanh**: [Điểm số chính xác ví dụ: 92/100 điểm]
-   - 🏆 **Chỉ Số Công Danh & Sự Nghiệp**: [Điểm số chính xác ví dụ: 85/100 điểm]
-   - ❤️ **Chỉ Số Tình Cảm & Mối Quan Hệ**: [Điểm số chính xác ví dụ: 78/100 điểm]
-   - 🧘 **Chỉ Số Thân Tâm & Trực Giác**: [Điểm số chính xác ví dụ: 90/100 điểm]
-   - 🎯 **Tỉ Lệ Xác Suất Thành Công Việc Lớn**: [Tỉ lệ % cụ thể ví dụ: 85%]
-   - ⚖️ **Tương Tác Ngũ Hành Bản Mệnh Với Ngày**: [Ví dụ: 80% Tương Sinh, 15% Tương Hòa, 5% Xung Khắc]
-   - ⏰ **Khung Giờ Hoàng Đạo Vượng Khí Nhất Cho Bản Mệnh**: [Khung giờ chính xác ví dụ: 08:30 - 10:15 & 15:00 - 16:45]
-   - 🍀 **Bộ Con Số Cát Tường May Mắn Trợ Lực**: [Liệt kê 4 con số cụ thể ví dụ: 03, 08, 19, 27]
+CHỈ DẪN TỐI QUAN TRỌNG VỀ ĐÁNH GIÁ CHỈ SỐ NĂNG LƯỢNG (AI CẦN SUY NGHĨ THẬT KỸ VÀ CẨN TRỌNG):
+1. **SUY NGHĨ KỸ LƯỠNG & QUÁN CHIẾU THỰC SỰ**:
+   - Bạn PHẢI đối chiếu thực sự giữa lá số người dùng (các cung sao, chính tinh, phụ tinh, hạn ngày trong Tử Vi; hoặc các hành tinh, góc chiếu Transit trong Bản đồ sao) với Can Chi (${lunarInfo?.canChiDay}) và Ngũ Hành Nạp Âm (${lunarInfo?.element}) của ngày hôm nay.
+   - TUYỆT ĐỐI KHÔNG SỬ DỤNG LẠI HOẶC RẬP KHUÔN CÁC CON SỐ CỐ ĐỊNH (như 88, 92, 85, 78, 90). Mỗi người và mỗi ngày có trường năng lượng biến thiên độc lập (thang điểm 30 - 98 điểm).
+   - Điểm số phải phản ánh chân thực độ tương hợp / khắc kỵ:
+     + Ngày vượng khí, tương sinh, nhiều cát tinh/góc chiếu đẹp: 75 - 95 điểm.
+     + Ngày bình hòa, quân bình: 60 - 74 điểm.
+     + Ngày xung khắc, gặp sao xấu, hình hại hoặc góc chiếu căng thẳng: 35 - 58 điểm (cảnh báo thận trọng).
 
-2. **II. PHÂN TÍCH GIAO THOA CUNG SAO BÁM SÁT LÁ SỐ**:
-   - Nếu có ảnh Lá Số Tử Vi: Phân tích sự tương tác giữa Cung Mệnh/Thân, Cung Quan Lộc, Cung Tài Bạch và Vòng Vận ngày (Lưu Nhật Hạn) với Can Chi và Ngũ Hành hôm nay.
-   - Nếu có ảnh Bản Đồ Sao: Phân tích sự tương tác giữa các hành tinh quá cảnh (Transit) hôm nay với The Big Three (Mặt Trời, Mặt Trăng, Cung Mọc) và các Nhà trên Bản đồ sao.
-   - Chỉ rõ điểm bứt phá mạnh nhất và rủi ro/điểm xung khắc cần tránh hôm nay.
+2. **QUY TẮC CỐT LÕI: NẾU KHÔNG THỂ BIẾT ĐƯỢC THÌ BỎ HẲN (CRITICAL)**:
+   - "Nếu không thể biết được hoặc không có cơ sở chiêm tinh rõ ràng thì BỎ HẲN, tuyệt đối không bịa ra con số ảo".
+   - Nếu ảnh lá số bị mờ, không nhận diện được các sao, hoặc dữ liệu không đủ để tính toán một cách xác thực: ĐỪNG CỐ ĐOÁN SỐ. Hãy để các giá trị điểm số là null và đặt "canDetermineScores": false trong khối JSON. Khi đó trong bài viết, không ghi các dòng điểm số /100 hay %, chỉ tập trung luận giải câu chữ định tính và đưa ra lời khuyên thực tiễn.
 
-3. **III. VẬN TRÌNH CHI TIẾT & KẾ SÁCH HÀNH ĐỘNG**:
-   - *Công việc & Tiền tài*: Chiến lược hành động cụ thể.
-   - *Cảm xúc & Mối quan hệ*: Ứng xử hòa ái, kết nối thiện duyên.
-   - *Thân tâm & Dưỡng sinh*: Cân bằng năng lượng thể chất và tinh thần.
+3. **NỘI DUNG LUẬN GIẢI CHÍNH**:
+   - **I. Giao Thoa Cung Sao Bám Sát Lá Số**:
+     + Nếu có ảnh Lá Số Tử Vi: Phân tích sự tương tác giữa Cung Mệnh/Thân, Cung Quan Lộc, Cung Tài Bạch và Vòng Vận ngày (Lưu Nhật Hạn) với Can Chi và Ngũ Hành hôm nay.
+     + Nếu có ảnh Bản Đồ Sao: Phân tích sự tương tác giữa các hành tinh quá cảnh (Transit) hôm nay với The Big Three (Mặt Trời, Mặt Trăng, Cung Mọc) và các Nhà trên Bản đồ sao.
+     + Chỉ rõ điểm bứt phá mạnh nhất và rủi ro/điểm xung khắc cần tránh hôm nay.
+   - **II. Vận Trình Chi Tiết & Kế Sách Hành Động**:
+     + *Công việc & Tiền tài*: Chiến lược hành động cụ thể.
+     + *Cảm xúc & Mối quan hệ*: Ứng xử hòa ái, kết nối thiện duyên.
+     + *Thân tâm & Dưỡng sinh*: Cân bằng năng lượng thể chất và tinh thần.
+   - **III. Khung Giờ Cát Tường & Sắc Màu May Mắn**:
+     + Khung giờ hoàng đạo và bộ con số hòa hợp ngũ hành.
+   - **IV. Minh Triết Cổ Nhân Đúc Kết Năng Lượng Ngày**:
+     + 1 câu danh ngôn trứ danh của cổ nhân (Kinh Dịch, Đạo Đức Kinh, Luận Ngữ...) kèm lời bình súc tích.
 
-4. **IV. MINH TRIẾT CỔ NHÂN ĐÚC KẾT NĂNG LƯỢNG NGÀY (BẮT BUỘC)**:
-   - 1 câu danh ngôn trứ danh của cổ nhân (Kinh Dịch, Đạo Đức Kinh - Lão Tử, Luận Ngữ - Khổng Tử, Trang Tử, Tôn Tử, v.v.).
-   - Kèm lời bình giải ngắn gọn, súc tích đúc kết đúng bài học năng lượng hôm nay cho bạn.
-
+4. **KHỐI JSON ĐỒNG BỘ Ở CUỐI CÙNG (BẮT BUỘC)**:
+Ở cuối cùng bài viết, đính kèm duy nhất 1 khối json sau:
+\`\`\`json
+{
+  "canDetermineScores": true, // Đổi thành false nếu ảnh mờ / thiếu cơ sở / không thể tính điểm số chính xác
+  "overallScore": 81, // Điểm số thực tính từ 30-98 dựa trên tương tác sao, hoặc null nếu canDetermineScores là false
+  "fortuneScore": 76, // Điểm Tài lộc thực tính hoặc null
+  "careerScore": 84, // Điểm Sự nghiệp thực tính hoặc null
+  "loveScore": 70, // Điểm Nhân duyên thực tính hoặc null
+  "healthScore": 88, // Điểm Thân tâm thực tính hoặc null
+  "successProbability": 80, // % thành công việc lớn hoặc null
+  "statusLabel": "Thượng Cát Cát Lợi", // Nhãn trạng thái chuẩn xác với điểm số
+  "reasoning": "Tóm tắt 1 câu cơ sở tính điểm hoặc lý do bỏ điểm số"
+}
+\`\`\`
 Trình bày bằng định dạng Markdown đẹp mắt, thanh lịch, trang trọng và truyền cảm hứng.`;
     } else {
       // General overview prompt when no charts are uploaded
@@ -789,55 +996,58 @@ Hãy đưa ra bản luận giải TỔNG QUAN KHÍ VẬN CHUNG CHUNG của ngày
 3. **Giờ Cát Tường & Sắc Màu May Mắn**: Khung giờ hoàng đạo chung và màu sắc tương sinh.
 4. **Thông Điệp Cá Nhân Hóa**: Nhắc nhở người bạn rằng khi tải lên Lá số Tử Vi hoặc Bản đồ sao tại hồ sơ, hệ thống sẽ tự động bám sát từng cung sao và tính toán các con số phần trăm cát hung cụ thể cho riêng bạn.
 5. **Minh Triết Cổ Nhân**: 1 câu danh ngôn sâu sắc tiếp thêm nội lực.
+6. **KHỐI JSON (Đặt canDetermineScores là false vì chưa có lá số)**:
+\`\`\`json
+{
+  "canDetermineScores": false,
+  "overallScore": null,
+  "fortuneScore": null,
+  "careerScore": null,
+  "loveScore": null,
+  "healthScore": null,
+  "successProbability": null,
+  "statusLabel": "Bình Hòa Thuận Khí",
+  "reasoning": "Chưa có ảnh lá số cá nhân nên không chấm điểm số định lượng"
+}
+\`\`\`
 
 Trình bày định dạng Markdown trang nhã.`;
     }
 
-    let contentsPayload: any;
     const parts: any[] = [];
 
     if (hasTuVi && tuViImage) {
-      const mimeMatch = tuViImage.match(/^data:([^;]+);base64,/);
-      const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
-      const base64Data = tuViImage.replace(/^data:[^;]+;base64,/, "");
-      parts.push({
-        inlineData: {
-          mimeType,
-          data: base64Data,
-        },
-      });
-      parts.push({ text: "[ĐÂY LÀ ẢNH LÁ SỐ TỬ VI CỦA NGƯỜI BẠN]" });
+      const tuViPart = await parseImageToInlineDataPart(tuViImage, "image/png");
+      if (tuViPart) {
+        parts.push(tuViPart);
+        parts.push({ text: "[ĐÂY LÀ ẢNH LÁ SỐ TỬ VI CỦA NGƯỜI BẠN]" });
+      }
     }
 
     if (hasNatal && natalChartImage) {
-      const mimeMatch = natalChartImage.match(/^data:([^;]+);base64,/);
-      const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
-      const base64Data = natalChartImage.replace(/^data:[^;]+;base64,/, "");
-      parts.push({
-        inlineData: {
-          mimeType,
-          data: base64Data,
-        },
-      });
-      parts.push({ text: "[ĐÂY LÀ ẢNH BẢN ĐỒ SAO CHIÊM TINH (NATAL CHART) CỦA NGƯỜI BẠN]" });
+      const natalPart = await parseImageToInlineDataPart(natalChartImage, "image/png");
+      if (natalPart) {
+        parts.push(natalPart);
+        parts.push({ text: "[ĐÂY LÀ ẢNH BẢN ĐỒ SAO CHIÊM TINH (NATAL CHART) CỦA NGƯỜI BẠN]" });
+      }
     }
 
     parts.push({ text: prompt });
-    contentsPayload = { contents: parts };
 
     try {
-      let readingText = "";
+      let rawText = "";
       if (parts.length > 1) {
-        readingText = await generateWithRetryAndFallback(contentsPayload);
+        rawText = await generateWithRetryAndFallback({ parts });
       } else {
-        readingText = await generateWithRetryAndFallback(prompt);
+        rawText = await generateWithRetryAndFallback(prompt);
       }
 
-      const metrics = extractOrGenerateMetrics(readingText, hasAnyPersonalizedData, dateStr);
+      const { cleanText, jsonBlock } = cleanJsonBlockFromMarkdown(rawText);
+      const metrics = extractOrGenerateMetrics(cleanText, jsonBlock, hasAnyPersonalizedData, dateStr);
 
       return res.json({
         success: true,
-        reading: readingText,
+        reading: cleanText,
         metrics,
         hasPersonalizedData: hasAnyPersonalizedData,
       });
@@ -849,39 +1059,42 @@ Trình bày định dạng Markdown trang nhã.`;
 
 ---
 
-#### I. Bảng Điểm & Chỉ Số Năng Lượng Ngày Hôm Nay
-- ⚡ **Chỉ Số Năng Lượng Toàn Diện**: **88 / 100 điểm** • **Đại Cát Hanh Thông**
-- 💰 **Chỉ Số Tài Lộc & Kinh Doanh**: **92 / 100 điểm**
-- 🏆 **Chỉ Số Công Danh & Sự Nghiệp**: **85 / 100 điểm**
-- ❤️ **Chỉ Số Tình Cảm & Mối Quan Hệ**: **78 / 100 điểm**
-- 🧘 **Chỉ Số Thân Tâm & Trực Giác**: **90 / 100 điểm**
-- 🎯 **Tỉ Lệ Xác Suất Thành Công Việc Lớn**: **85%**
-- ⚖️ **Cân Bằng Ngũ Hành Bản Mệnh**: **80% Tương Sinh, 15% Tương Hòa, 5% Xung Khắc**
-- ⏰ **Khung Giờ Hoàng Đạo Vượng Khí**: **08:30 - 10:15 & 15:00 - 16:45**
-- 🍀 **Bộ Con Số May Mắn Trợ Lực**: **03, 08, 19, 27**
+#### I. Giao Thoa Năng Lượng Bám Sát Lá Số
+${hasAnyPersonalizedData ? "- **Phản hồi từ Hồ Sơ Lá Số & Bản Đồ Sao**: Sự kết hợp giữa thế sao bản mệnh và thời vận ngày cho thấy Cung Quan Lộc và các trục cung vị đang nhận được luồng sinh khí tích cực. Trực giác của bạn hôm nay đặc biệt nhạy bén, các quyết định liên quan đến kế hoạch mới cần sự bình tĩnh và chắc chắn." : "- **Khí Vận Thiên Thời**: Năng lượng Can Chi ngày tương sinh với ngũ hành bản mệnh, tạo điều kiện thuận lợi cho sự tập trung trí tuệ và mở rộng quan hệ đối tác."}
 
-#### II. Giao Thoa Năng Lượng Bám Sát Lá Số
-${hasAnyPersonalizedData ? "- **Phản hồi từ Hồ Sơ Lá Số & Bản Đồ Sao**: Sự kết hợp giữa thế sao bản mệnh và thời vận ngày cho thấy Cung Quan Lộc và Nhà số 10 (Sự nghiệp) đang nhận được luồng sinh khí tích cực từ trục năng lượng cát tường. Trực giác của bạn hôm nay đặc biệt nhạy bén, các quyết định liên quan đến dự án mới có tỷ lệ hanh thông đạt trên 85%." : "- **Khí Vận Thiên Thời**: Năng lượng Can Chi ngày tương sinh với ngũ hành bản mệnh, tạo điều kiện thuận lợi cho sự tập trung trí tuệ và mở rộng quan hệ đối tác."}
-
-#### III. Vận Trình Chi Tiết Các Khía Cạnh
+#### II. Vận Trình Chi Tiết Các Khía Cạnh
 - **Công việc & Tài lộc**: Thích hợp để ký kết, khởi động ý tưởng mới hoặc giải quyết dứt điểm các công việc đòi hỏi tư duy sáng tạo. Tránh để sự cầu toàn thái quá làm chậm tiến độ.
 - **Cảm xúc & Mối quan hệ**: Lấy sự chân thành và thấu cảm làm trọng tâm. Một lời hỏi thăm ấm áp có thể hóa giải những hiểu lầm không đáng có.
 - **Thân tâm & Dưỡng sinh**: Dành 15-20 phút buổi sáng hoặc chiều tối để tĩnh tâm, tiếp xúc với thiên nhiên hoặc thưởng trà để nạp lại nguồn sinh khí.
 
-#### IV. Khung Giờ Cát Tường & Sắc Màu May Mắn
+#### III. Khung Giờ Cát Tường & Sắc Màu May Mắn
 - **Khung giờ hoàng đạo**: Giờ Thìn (07h - 09h), Giờ Tỵ (09h - 11h), Giờ Thân (15h - 17h).
 - **Màu sắc hòa hợp**: Vàng kim, Xanh lam ngọc, Trắng ngà.
 - **Con số may mắn**: 3, 6, 8, 9.
 
 ---
 
-#### V. MINH TRIẾT CỔ NHÂN ĐÚC KẾT NĂNG LƯỢNG NGÀY
+#### IV. MINH TRIẾT CỔ NHÂN ĐÚC KẾT NĂNG LƯỢNG NGÀY
 > *"Quân tử dĩ thuận đức, tích tiểu dĩ cao đại."*
 > — **Kinh Dịch (Chu Dịch - Quẻ Địa Phong Thăng)**
 >
 > *(Bậc quân tử noi theo đức thuận mà tích lũy từng việc nhỏ để làm nên việc lớn cao rộng. Năng lượng ngày hôm nay nhắc nhở bạn: Hãy kiên trì với những hành động thiện lành, từng bước nhỏ vững chắc sẽ kiến tạo nên thành tựu viên mãn).*`;
 
-      const metrics = extractOrGenerateMetrics(fallbackText, hasAnyPersonalizedData, dateStr);
+      const metrics = {
+        canDetermineScores: false,
+        overallScore: null,
+        fortuneScore: null,
+        careerScore: null,
+        loveScore: null,
+        healthScore: null,
+        successProbability: null,
+        elementalHarmonization: { supportive: 75, neutral: 20, conflicting: 5 },
+        peakHours: ["07:00 - 09:00", "13:00 - 15:00"],
+        luckyNumbers: [3, 8, 16, 28],
+        statusLabel: "Luận Giải Khí Vận Mệnh",
+        reasoning: "Tập trung luận giải định tính bám sát lá số (bỏ chấm điểm số do cần thêm căn cứ).",
+        hasPersonalizedData: hasAnyPersonalizedData,
+      };
 
       return res.json({
         success: true,
@@ -931,6 +1144,7 @@ interface UserRecord {
 const USERS_FILE = path.join(process.cwd(), "users_db.json");
 const MUSIC_FILE = path.join(process.cwd(), "music_db.json");
 const HISTORY_FILE = path.join(process.cwd(), "history_db.json");
+const PLANT_DIARY_FILE = path.join(process.cwd(), "plant_diary_db.json");
 
 const ADMIN_EMAIL = "aha@aha.com";
 const USERS_DB: Map<string, UserRecord> = new Map();
@@ -1849,6 +2063,245 @@ app.delete("/api/history/:userId", (req, res) => {
   } catch (error: any) {
     console.error("Clear user history error:", error);
     res.status(500).json({ success: false, error: "Lỗi khi xóa lịch sử." });
+  }
+});
+
+// ==========================================
+// Cross-Device Plant Garden & Diary Persistence API
+// ==========================================
+interface ServerPlantDiaryEntry {
+  id: string;
+  type: "water" | "weed";
+  treeId: string;
+  treeName: string;
+  content: string;
+  timestamp: number;
+  dateStr: string;
+  expGained: number;
+  wisdomMessage?: string;
+}
+
+interface ServerPlantGarden {
+  selectedTreeId: string;
+  level: number;
+  exp: number;
+  totalExp: number;
+  waterCount: number;
+  weedCount: number;
+  plantedAt: number;
+  lastTendedAt: number;
+  entries: ServerPlantDiaryEntry[];
+}
+
+const USER_PLANT_DB: Map<string, ServerPlantGarden> = new Map();
+
+function loadPlantDiaryFromDisk() {
+  try {
+    if (fs.existsSync(PLANT_DIARY_FILE)) {
+      const data = fs.readFileSync(PLANT_DIARY_FILE, "utf-8");
+      const obj = JSON.parse(data);
+      if (typeof obj === "object" && obj !== null) {
+        for (const [userId, garden] of Object.entries(obj)) {
+          if (garden && typeof garden === "object") {
+            USER_PLANT_DB.set(userId.toLowerCase().trim(), garden as ServerPlantGarden);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to load plant_diary_db.json:", err);
+  }
+}
+
+function savePlantDiaryToDisk() {
+  try {
+    const obj: Record<string, ServerPlantGarden> = {};
+    USER_PLANT_DB.forEach((garden, userId) => {
+      obj[userId] = garden;
+    });
+    fs.writeFileSync(PLANT_DIARY_FILE, JSON.stringify(obj, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Failed to write plant_diary_db.json:", err);
+  }
+}
+
+loadPlantDiaryFromDisk();
+
+function getPlantGardenForUserKey(rawKey: string): ServerPlantGarden | null {
+  if (!rawKey) return null;
+  const normalizedKey = rawKey.trim().toLowerCase();
+  if (USER_PLANT_DB.has(normalizedKey)) {
+    return USER_PLANT_DB.get(normalizedKey)!;
+  }
+
+  // Check email/id resolution
+  const userByEmail = USERS_DB.get(normalizedKey);
+  if (userByEmail?.id && USER_PLANT_DB.has(userByEmail.id.toLowerCase())) {
+    return USER_PLANT_DB.get(userByEmail.id.toLowerCase())!;
+  }
+
+  for (const [email, user] of USERS_DB.entries()) {
+    if (user.id && user.id.toLowerCase() === normalizedKey && USER_PLANT_DB.has(email)) {
+      return USER_PLANT_DB.get(email)!;
+    }
+  }
+
+  return null;
+}
+
+// API: Get user plant garden state and diary
+app.get("/api/plant-diary/:userId", (req, res) => {
+  try {
+    const rawUserId = req.params.userId;
+    if (!rawUserId) {
+      return res.status(400).json({ success: false, error: "Thiếu userId" });
+    }
+    const userId = rawUserId.trim().toLowerCase();
+    const garden = getPlantGardenForUserKey(userId);
+
+    return res.json({
+      success: true,
+      userId,
+      garden: garden || null,
+    });
+  } catch (error: any) {
+    console.error("Fetch user plant diary error:", error);
+    res.status(500).json({ success: false, error: "Lỗi máy chủ khi lấy nhật ký nuôi cây." });
+  }
+});
+
+// API: Save or update plant garden & single entry
+app.post("/api/plant-diary/save", (req, res) => {
+  try {
+    const { userId: rawUserId, garden, newEntry } = req.body;
+    if (!rawUserId) {
+      return res.status(400).json({ success: false, error: "Thiếu userId" });
+    }
+    if (!garden) {
+      return res.status(400).json({ success: false, error: "Thiếu dữ liệu vườn cây" });
+    }
+
+    const userId = rawUserId.trim().toLowerCase();
+    const existing = USER_PLANT_DB.get(userId);
+
+    let updatedEntries: ServerPlantDiaryEntry[] = Array.isArray(garden.entries) ? [...garden.entries] : [];
+    if (newEntry && newEntry.id) {
+      const exists = updatedEntries.some((e) => e.id === newEntry.id);
+      if (!exists) {
+        updatedEntries.unshift(newEntry);
+      }
+    }
+
+    const savedGarden: ServerPlantGarden = {
+      selectedTreeId: garden.selectedTreeId || existing?.selectedTreeId || "sakura",
+      level: Number(garden.level) || existing?.level || 1,
+      exp: Number(garden.exp) || existing?.exp || 0,
+      totalExp: Number(garden.totalExp) || existing?.totalExp || 0,
+      waterCount: Number(garden.waterCount) || existing?.waterCount || 0,
+      weedCount: Number(garden.weedCount) || existing?.weedCount || 0,
+      plantedAt: garden.plantedAt || existing?.plantedAt || Date.now(),
+      lastTendedAt: garden.lastTendedAt || Date.now(),
+      entries: updatedEntries.slice(0, 200),
+    };
+
+    USER_PLANT_DB.set(userId, savedGarden);
+    savePlantDiaryToDisk();
+
+    return res.json({
+      success: true,
+      message: "Đã lưu thông tin nuôi cây lên máy chủ thành công!",
+      garden: savedGarden,
+    });
+  } catch (error: any) {
+    console.error("Save plant diary error:", error);
+    res.status(500).json({ success: false, error: "Lỗi khi lưu nhật ký nuôi cây." });
+  }
+});
+
+// API: Sync garden state and entries
+app.post("/api/plant-diary/sync", (req, res) => {
+  try {
+    const { userId: rawUserId, garden } = req.body;
+    if (!rawUserId || !garden) {
+      return res.status(400).json({ success: false, error: "Thiếu userId hoặc garden data" });
+    }
+
+    const userId = rawUserId.trim().toLowerCase();
+    const serverGarden = getPlantGardenForUserKey(userId);
+
+    if (!serverGarden) {
+      USER_PLANT_DB.set(userId, garden);
+      savePlantDiaryToDisk();
+      return res.json({ success: true, garden });
+    }
+
+    // Merge entries
+    const map = new Map<string, ServerPlantDiaryEntry>();
+    for (const entry of serverGarden.entries || []) {
+      if (entry && entry.id) map.set(entry.id, entry);
+    }
+    for (const entry of garden.entries || []) {
+      if (entry && entry.id) {
+        if (!map.has(entry.id)) {
+          map.set(entry.id, entry);
+        }
+      }
+    }
+
+    const mergedEntries = Array.from(map.values());
+    mergedEntries.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    const maxExp = Math.max(serverGarden.totalExp || 0, garden.totalExp || 0);
+
+    const mergedGarden: ServerPlantGarden = {
+      selectedTreeId: garden.selectedTreeId || serverGarden.selectedTreeId || "sakura",
+      level: Math.max(serverGarden.level || 1, garden.level || 1),
+      exp: garden.exp || serverGarden.exp || 0,
+      totalExp: maxExp,
+      waterCount: Math.max(serverGarden.waterCount || 0, garden.waterCount || 0),
+      weedCount: Math.max(serverGarden.weedCount || 0, garden.weedCount || 0),
+      plantedAt: Math.min(serverGarden.plantedAt || Date.now(), garden.plantedAt || Date.now()),
+      lastTendedAt: Math.max(serverGarden.lastTendedAt || 0, garden.lastTendedAt || 0),
+      entries: mergedEntries.slice(0, 200),
+    };
+
+    USER_PLANT_DB.set(userId, mergedGarden);
+    savePlantDiaryToDisk();
+
+    return res.json({
+      success: true,
+      message: "Đồng bộ nhật ký nuôi cây hoàn tất!",
+      garden: mergedGarden,
+    });
+  } catch (error: any) {
+    console.error("Sync plant diary error:", error);
+    res.status(500).json({ success: false, error: "Lỗi máy chủ khi đồng bộ nuôi cây." });
+  }
+});
+
+// API: Delete a diary entry
+app.delete("/api/plant-diary/:userId/:entryId", (req, res) => {
+  try {
+    const rawUserId = req.params.userId?.trim().toLowerCase();
+    const entryId = req.params.entryId;
+    if (!rawUserId || !entryId) {
+      return res.status(400).json({ success: false, error: "Thiếu userId hoặc entryId" });
+    }
+
+    const garden = USER_PLANT_DB.get(rawUserId);
+    if (garden) {
+      garden.entries = (garden.entries || []).filter((e) => e.id !== entryId);
+      USER_PLANT_DB.set(rawUserId, garden);
+      savePlantDiaryToDisk();
+    }
+
+    return res.json({
+      success: true,
+      message: "Đã xóa mục nhật ký thành công.",
+    });
+  } catch (error: any) {
+    console.error("Delete plant diary entry error:", error);
+    res.status(500).json({ success: false, error: "Lỗi khi xóa nhật ký nuôi cây." });
   }
 });
 

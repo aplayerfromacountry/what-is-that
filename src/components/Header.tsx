@@ -15,6 +15,8 @@ import {
   UploadCloud,
   ShieldCheck,
   FileImage,
+  Sprout,
+  Feather,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { TabType } from "../types";
@@ -60,6 +62,11 @@ export const Header: React.FC<HeaderProps> = ({
       label: "Lịch Sử Xem",
       icon: History,
       badge: historyCount > 0 ? `${historyCount}` : undefined,
+    },
+    {
+      id: "plant-diary",
+      label: "Nơi Xả Bỏ Nỗi Niềm",
+      icon: Feather,
     },
   ];
 

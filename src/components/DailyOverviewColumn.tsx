@@ -54,10 +54,15 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
-          if (parsed.overview) setAiOverview(parsed.overview);
-          else if (parsed.reading) setAiOverview(parsed.reading);
-          if (parsed.metrics) setMetrics(parsed.metrics);
-          return;
+          // Invalidate legacy cached scores with repetitive 88/92 canned numbers
+          if (parsed?.metrics?.overallScore === 88 && parsed?.metrics?.fortuneScore === 92) {
+            localStorage.removeItem(cacheKey);
+          } else {
+            if (parsed.overview) setAiOverview(parsed.overview);
+            else if (parsed.reading) setAiOverview(parsed.reading);
+            if (parsed.metrics) setMetrics(parsed.metrics);
+            return;
+          }
         } catch (e) {
           // ignore
         }
@@ -319,63 +324,76 @@ export const DailyOverviewColumn: React.FC<DailyOverviewColumnProps> = ({
               <div className="flex items-center justify-between text-xs">
                 <span className="font-bold text-amber-300 flex items-center gap-1">
                   <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  Chỉ Số Năng Lượng:
+                  {typeof metrics.overallScore === "number" ? "Chỉ Số Năng Lượng:" : "Khí Vận Ngày:"}
                 </span>
-                <span className="text-amber-200 font-extrabold text-sm font-cinzel">
-                  {metrics.overallScore}/100 • {metrics.statusLabel}
-                </span>
+                {typeof metrics.overallScore === "number" ? (
+                  <span className="text-amber-200 font-extrabold text-sm font-cinzel">
+                    {metrics.overallScore}/100 • {metrics.statusLabel}
+                  </span>
+                ) : (
+                  <span className="text-amber-200 font-bold text-xs">
+                    {metrics.statusLabel || "Luận Giải Khí Vận Mệnh"}
+                  </span>
+                )}
               </div>
-              {/* 4 Mini Progress Bars */}
-              <div className="grid grid-cols-2 gap-2 text-[10px]">
-                <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
-                  <div className="flex justify-between text-slate-400">
-                    <span>Tài Lộc</span>
-                    <span className="text-amber-300 font-bold">{metrics.fortuneScore}%</span>
+
+              {/* 4 Mini Progress Bars - CHỈ HIỆN KHI AI XÁC ĐỊNH ĐƯỢC CON SỐ, BỎ HẲN NẾU LÀ NULL */}
+              {typeof metrics.fortuneScore === "number" && typeof metrics.careerScore === "number" ? (
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                  <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
+                    <div className="flex justify-between text-slate-400">
+                      <span>Tài Lộc</span>
+                      <span className="text-amber-300 font-bold">{metrics.fortuneScore}%</span>
+                    </div>
+                    <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                      <div
+                        className="bg-amber-400 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${metrics.fortuneScore}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                    <div
-                      className="bg-amber-400 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${metrics.fortuneScore}%` }}
-                    />
+                  <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
+                    <div className="flex justify-between text-slate-400">
+                      <span>Sự Nghiệp</span>
+                      <span className="text-sky-300 font-bold">{metrics.careerScore}%</span>
+                    </div>
+                    <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                      <div
+                        className="bg-sky-400 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${metrics.careerScore}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
+                    <div className="flex justify-between text-slate-400">
+                      <span>Nhân Duyên</span>
+                      <span className="text-rose-300 font-bold">{metrics.loveScore ?? "--"}%</span>
+                    </div>
+                    <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                      <div
+                        className="bg-rose-400 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${metrics.loveScore ?? 50}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
+                    <div className="flex justify-between text-slate-400">
+                      <span>Thân Tâm</span>
+                      <span className="text-emerald-300 font-bold">{metrics.healthScore ?? "--"}%</span>
+                    </div>
+                    <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                      <div
+                        className="bg-emerald-400 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${metrics.healthScore ?? 50}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
-                <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
-                  <div className="flex justify-between text-slate-400">
-                    <span>Sự Nghiệp</span>
-                    <span className="text-sky-300 font-bold">{metrics.careerScore}%</span>
-                  </div>
-                  <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                    <div
-                      className="bg-sky-400 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${metrics.careerScore}%` }}
-                    />
-                  </div>
-                </div>
-                <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
-                  <div className="flex justify-between text-slate-400">
-                    <span>Nhân Duyên</span>
-                    <span className="text-rose-300 font-bold">{metrics.loveScore}%</span>
-                  </div>
-                  <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                    <div
-                      className="bg-rose-400 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${metrics.loveScore}%` }}
-                    />
-                  </div>
-                </div>
-                <div className="p-1.5 rounded-lg bg-black/30 border border-white/5 space-y-1">
-                  <div className="flex justify-between text-slate-400">
-                    <span>Thân Tâm</span>
-                    <span className="text-emerald-300 font-bold">{metrics.healthScore}%</span>
-                  </div>
-                  <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                    <div
-                      className="bg-emerald-400 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${metrics.healthScore}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
+              ) : (
+                <p className="text-[11px] text-slate-300 leading-relaxed font-light">
+                  {metrics.reasoning || "Tập trung phân tích khí vận định tính bám sát thế sao và ngũ hành bản mệnh."}
+                </p>
+              )}
             </div>
           )
         )}

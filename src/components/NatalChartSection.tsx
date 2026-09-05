@@ -23,13 +23,18 @@ import {
   Eye,
   X,
   FileImage,
+  UploadCloud,
+  Cloud,
 } from "lucide-react";
 import { ImageUpload } from "./ImageUpload";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ConsultationChat } from "./ConsultationChat";
 import { saveHistoryItem, isUserLoggedIn } from "../utils/historyStorage";
-import { updateUserAstroProfile } from "./AuthModal";
+import { updateUserAstroProfile, saveStoredUser } from "./AuthModal";
 import { UserProfile, AstrologicalProfile } from "../types";
+import { auth, getAccessToken } from "../firebase";
+import { saveAstroChartToFirestore, saveUserProfileToFirestore } from "../utils/firebaseSync";
+import { uploadAstroChartToDrive } from "../utils/googleDriveService";
 import { motion, AnimatePresence } from "motion/react";
 
 interface NatalChartSectionProps {
@@ -87,6 +92,8 @@ export const NatalChartSection: React.FC<NatalChartSectionProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [hasSaved, setHasSaved] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [isSavingToCloud, setIsSavingToCloud] = useState<boolean>(false);
+  const [cloudSavedMsg, setCloudSavedMsg] = useState<string | null>(null);
 
   // Auto-fill from user profile
   useEffect(() => {
@@ -95,7 +102,78 @@ export const NatalChartSection: React.FC<NatalChartSectionProps> = ({
     } else if (currentUser?.name && !name) {
       setName(currentUser.name);
     }
+    if (currentUser?.astroProfile?.natalChartImageUrl && !imageBase64) {
+      setImageBase64(currentUser.astroProfile.natalChartImageUrl);
+    }
   }, [currentUser]);
+
+  const handleSaveChartToCloud = async () => {
+    if (!imageBase64) return;
+    setIsSavingToCloud(true);
+    setCloudSavedMsg(null);
+    try {
+      const chartName = name.trim() || currentUser?.name || "Bạn Tri Kỷ";
+
+      // 1. Save to Firestore
+      if (auth.currentUser) {
+        await saveAstroChartToFirestore(auth.currentUser.uid, {
+          id: "chart_natal_current",
+          userId: auth.currentUser.uid,
+          type: "natal-chart",
+          title: `Bản Đồ Sao - ${chartName}`,
+          fullName: chartName,
+          chartImageUrl: imageBase64,
+          notes: `Chủ đề ${selectedTopic.title}`,
+          updatedAt: Date.now(),
+        });
+      }
+
+      // 2. Save to Google Drive if connected
+      const driveToken = getAccessToken();
+      if (driveToken) {
+        await uploadAstroChartToDrive(driveToken, {
+          type: "natal-chart",
+          fullName: chartName,
+          chartImageUrl: imageBase64,
+          notes: `Bản đồ sao chiêm tinh - ${selectedTopic.title}`,
+        });
+      }
+
+      // 3. Update user profile
+      if (currentUser && onUpdateUser) {
+        const updatedUser: UserProfile = {
+          ...currentUser,
+          astroProfile: {
+            ...(currentUser.astroProfile || {
+              fullName: chartName,
+              birthDate: "",
+              birthHour: "Tý (23h - 1h)",
+              calendarType: "solar",
+              gender: "Khác",
+              birthPlace: "",
+              sunSign: "Bạch Dương",
+              moonSign: "Bạch Dương",
+              risingSign: "Bạch Dương",
+            }),
+            natalChartImageUrl: imageBase64,
+          },
+        };
+        saveStoredUser(updatedUser);
+        onUpdateUser(updatedUser);
+        if (auth.currentUser) {
+          saveUserProfileToFirestore(updatedUser).catch(console.warn);
+        }
+      }
+
+      setCloudSavedMsg("Đã lưu bản đồ sao lên Firebase & Google Drive!");
+      setTimeout(() => setCloudSavedMsg(null), 3500);
+    } catch (err: any) {
+      setCloudSavedMsg(`Lưu thất bại: ${err?.message || "Lỗi lưu trữ"}`);
+      setTimeout(() => setCloudSavedMsg(null), 3500);
+    } finally {
+      setIsSavingToCloud(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -344,7 +422,20 @@ export const NatalChartSection: React.FC<NatalChartSectionProps> = ({
                   <Check className="w-4 h-4 text-emerald-400" />
                   <span>Đã nạp ảnh bản đồ sao</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveChartToCloud}
+                    disabled={isSavingToCloud}
+                    className="px-2.5 py-1.5 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-[11px] font-medium flex items-center gap-1 transition-colors disabled:opacity-50"
+                  >
+                    {isSavingToCloud ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <UploadCloud className="w-3.5 h-3.5" />
+                    )}
+                    <span>Lưu lên Firebase / Drive</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => setIsImageModalOpen(true)}
@@ -362,6 +453,13 @@ export const NatalChartSection: React.FC<NatalChartSectionProps> = ({
                     Lưu ảnh bản đồ sao về máy
                   </a>
                 </div>
+              </div>
+            )}
+
+            {cloudSavedMsg && (
+              <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-200 text-xs flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{cloudSavedMsg}</span>
               </div>
             )}
 

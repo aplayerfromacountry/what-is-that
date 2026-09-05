@@ -20,12 +20,16 @@ import {
   RefreshCw,
   Lock,
   FileImage,
+  Sprout,
+  Feather,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { TabType, DailyLunarInfo } from "../types";
 import { UserProfile } from "./AuthModal";
 import { getDailyLunarInfo } from "../utils/lunarCalendar";
 import { PersonalizedDailyModal } from "./PersonalizedDailyModal";
+import { getPlantGarden } from "../utils/plantDiaryStorage";
+import { PLANT_TREES } from "../data/plantTrees";
 
 interface HubSelectionScreenProps {
   onSelectOption: (tab: TabType) => void;
@@ -47,6 +51,14 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
   const [isAnalyzingDaily, setIsAnalyzingDaily] = useState<boolean>(false);
   const [dailyMetrics, setDailyMetrics] = useState<any>(null);
   const [dailyReading, setDailyReading] = useState<string | null>(null);
+  const [plantGarden, setPlantGarden] = useState(getPlantGarden());
+
+  useEffect(() => {
+    setPlantGarden(getPlantGarden());
+  }, [currentUser]);
+
+  const activeTreeInfo =
+    PLANT_TREES.find((t) => t.id === plantGarden.selectedTreeId) || PLANT_TREES[0];
 
   const hasTuVi = !!currentUser?.astroProfile?.tuViImageUrl;
   const hasNatal = !!currentUser?.astroProfile?.natalChartImageUrl;
@@ -70,9 +82,14 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
-          if (parsed.metrics) setDailyMetrics(parsed.metrics);
-          if (parsed.reading || parsed.overview) setDailyReading(parsed.reading || parsed.overview);
-          return;
+          // Invalidate legacy cached scores with repetitive 88/92 canned numbers
+          if (parsed?.metrics?.overallScore === 88 && parsed?.metrics?.fortuneScore === 92) {
+            localStorage.removeItem(cacheKey);
+          } else {
+            if (parsed.metrics) setDailyMetrics(parsed.metrics);
+            if (parsed.reading || parsed.overview) setDailyReading(parsed.reading || parsed.overview);
+            return;
+          }
         } catch (e) {
           console.warn("Cached daily analysis parse failed", e);
         }
@@ -594,24 +611,46 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
                   ) : (
                     <>
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        {/* Big Score */}
+                        {/* Big Score or Qualitative Status */}
                         <div className="flex items-baseline gap-2">
-                          <span className="text-3xl sm:text-4xl font-extrabold text-amber-200 font-cinzel drop-shadow-sm">
-                            {dailyMetrics?.overallScore || 88}
-                            <span className="text-sm font-normal text-amber-400/70">/100</span>
-                          </span>
-                          <div>
-                            <div className="text-xs font-bold text-slate-100">
-                              {dailyMetrics?.statusLabel || "Vượng Khí • Thuận Khởi Sự"}
+                          {typeof dailyMetrics?.overallScore === "number" ? (
+                            <>
+                              <span className="text-3xl sm:text-4xl font-extrabold text-amber-200 font-cinzel drop-shadow-sm">
+                                {dailyMetrics.overallScore}
+                                <span className="text-sm font-normal text-amber-400/70">/100</span>
+                              </span>
+                              <div>
+                                <div className="text-xs font-bold text-slate-100">
+                                  {dailyMetrics.statusLabel || "Vượng Khí • Thuận Khởi Sự"}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  {hasBothImages
+                                    ? "Đã luận giải bám sát cả Lá số Tử Vi & Bản đồ sao"
+                                    : hasTuVi
+                                    ? "Đã luận giải bám sát Lá số Tử Vi"
+                                    : "Đã luận giải bám sát Bản đồ sao"}
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-2.5">
+                              <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/25">
+                                <Sparkles className="w-5 h-5 text-amber-400" />
+                              </div>
+                              <div>
+                                <div className="text-sm font-bold text-amber-200">
+                                  {dailyMetrics?.statusLabel || "Luận Giải Khí Vận Mệnh"}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  {hasBothImages
+                                    ? "Đã luận giải bám sát cả Lá số Tử Vi & Bản đồ sao"
+                                    : hasTuVi
+                                    ? "Đã luận giải bám sát Lá số Tử Vi"
+                                    : "Đã luận giải bám sát Bản đồ sao"}
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-[11px] text-slate-400">
-                              {hasBothImages
-                                ? "Đã luận giải bám sát cả Lá số Tử Vi & Bản đồ sao"
-                                : hasTuVi
-                                ? "Đã luận giải bám sát Lá số Tử Vi"
-                                : "Đã luận giải bám sát Bản đồ sao"}
-                            </div>
-                          </div>
+                          )}
                         </div>
 
                         {/* Profile Association Badge */}
@@ -635,25 +674,27 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
                         </div>
                       </div>
 
-                      {/* Mini score breakdown */}
-                      <div className="grid grid-cols-4 gap-1.5 text-[10px] pt-1">
-                        <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
-                          <div className="text-slate-400">Tài Lộc</div>
-                          <div className="font-bold text-amber-300">{dailyMetrics?.fortuneScore || 92}%</div>
+                      {/* Mini score breakdown - CHỈ HIỆN KHI AI XÁC ĐỊNH ĐƯỢC CON SỐ THỰC TẾ, NẾU KHÔNG THÌ BỎ HẲN */}
+                      {typeof dailyMetrics?.fortuneScore === "number" && typeof dailyMetrics?.careerScore === "number" && (
+                        <div className="grid grid-cols-4 gap-1.5 text-[10px] pt-1">
+                          <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
+                            <div className="text-slate-400">Tài Lộc</div>
+                            <div className="font-bold text-amber-300">{dailyMetrics.fortuneScore}%</div>
+                          </div>
+                          <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
+                            <div className="text-slate-400">Sự Nghiệp</div>
+                            <div className="font-bold text-sky-300">{dailyMetrics.careerScore}%</div>
+                          </div>
+                          <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
+                            <div className="text-slate-400">Nhân Duyên</div>
+                            <div className="font-bold text-rose-300">{dailyMetrics.loveScore ?? "--"}%</div>
+                          </div>
+                          <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
+                            <div className="text-slate-400">Thân Tâm</div>
+                            <div className="font-bold text-emerald-300">{dailyMetrics.healthScore ?? "--"}%</div>
+                          </div>
                         </div>
-                        <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
-                          <div className="text-slate-400">Sự Nghiệp</div>
-                          <div className="font-bold text-sky-300">{dailyMetrics?.careerScore || 85}%</div>
-                        </div>
-                        <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
-                          <div className="text-slate-400">Nhân Duyên</div>
-                          <div className="font-bold text-rose-300">{dailyMetrics?.loveScore || 78}%</div>
-                        </div>
-                        <div className="px-2 py-1 rounded-lg bg-black/30 border border-white/5 text-center">
-                          <div className="text-slate-400">Thân Tâm</div>
-                          <div className="font-bold text-emerald-300">{dailyMetrics?.healthScore || 90}%</div>
-                        </div>
-                      </div>
+                      )}
 
                       {/* Analysis Preview or Wisdom Quote */}
                       <div className="pt-2 border-t border-white/10 space-y-1">
@@ -769,44 +810,87 @@ export const HubSelectionScreen: React.FC<HubSelectionScreenProps> = ({
           })}
         </div>
 
-        {/* 1 Small Card Below: History Section */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.45 }}
-          whileHover={{ y: -3, scale: 1.01 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => onSelectOption("history")}
-          className="w-full max-w-xl px-2 sm:px-4 cursor-pointer"
-        >
-          <div className="rounded-2xl glass-panel-gold border border-amber-400/30 hover:border-amber-400/70 p-4 sm:p-4.5 flex items-center justify-between gap-4 transition-all duration-300 hover:shadow-lg hover:shadow-amber-500/15 group">
-            <div className="flex items-center gap-3.5 min-w-0">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                <History className="w-5 h-5" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm sm:text-base font-bold font-cinzel text-slate-100 group-hover:text-amber-200 transition-colors">
-                    Lịch Sử Luận Giải Đã Xem
-                  </h3>
-                  {historyCount > 0 && (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/30 text-amber-300 border border-amber-500/40">
-                      {historyCount} bản ghi
-                    </span>
-                  )}
+        {/* 2 Small Cards Below: History Section & Plant Care Diary */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full px-2 sm:px-4">
+          {/* Card 1: Lịch Sử Luận Giải Đã Xem */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.45 }}
+            whileHover={{ y: -3, scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => onSelectOption("history")}
+            className="cursor-pointer"
+          >
+            <div className="h-full rounded-2xl glass-panel-gold border border-amber-400/30 hover:border-amber-400/70 p-4 sm:p-4.5 flex items-center justify-between gap-3.5 transition-all duration-300 hover:shadow-lg hover:shadow-amber-500/15 group">
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform shadow-md">
+                  <History className="w-5 h-5" />
                 </div>
-                <p className="text-xs text-slate-400 truncate mt-0.5">
-                  Xem lại, tra cứu, xuất dữ liệu hoặc xóa các bản luận giải Tử Vi, Bản Đồ Sao, Tarot & Dịch
-                </p>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm sm:text-base font-bold font-cinzel text-slate-100 group-hover:text-amber-200 transition-colors truncate">
+                      Lịch Sử Luận Giải
+                    </h3>
+                    {historyCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/30 text-amber-300 border border-amber-500/40 shrink-0">
+                        {historyCount} bản ghi
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 truncate mt-0.5 font-light">
+                    Xem lại kết quả Tử Vi, Bản Đồ Sao, Tarot & Dịch
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1 text-xs font-semibold text-amber-300 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 shrink-0 group-hover:bg-amber-500/25 transition-colors">
+                <span className="hidden sm:inline">Mở Lịch Sử</span>
+                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
               </div>
             </div>
+          </motion.div>
 
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-300 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 shrink-0 group-hover:bg-amber-500/25 transition-colors">
-              <span className="hidden sm:inline">Mở Lịch Sử</span>
-              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+          {/* Card 2: Nơi Xả Bỏ Nỗi Niềm (Ngay cạnh Lịch Sử) */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+            whileHover={{ y: -3, scale: 1.01 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => onSelectOption("plant-diary")}
+            className="cursor-pointer"
+          >
+            <div className="h-full rounded-2xl glass-panel border border-purple-500/30 hover:border-purple-400/70 p-4 sm:p-4.5 flex items-center justify-between gap-3.5 transition-all duration-300 hover:shadow-lg hover:shadow-purple-500/15 group relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/10 rounded-full blur-xl pointer-events-none" />
+
+              <div className="flex items-center gap-3.5 min-w-0 relative z-10">
+                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-purple-500/20 via-fuchsia-500/15 to-cyan-500/20 border border-purple-400/40 text-purple-300 flex items-center justify-center shrink-0 shadow-md group-hover:scale-105 transition-transform">
+                  <Feather className="w-5 h-5" />
+                </div>
+
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm sm:text-base font-bold font-cinzel text-slate-100 group-hover:text-purple-200 transition-colors truncate">
+                      Nơi Xả Bỏ Nỗi Niềm
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">
+                      Manifest & Buông Xả
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 truncate mt-0.5 font-light">
+                    Xả bỏ áp lực muộn phiền • Gửi gắm lời manifest điều lành
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1 text-xs font-semibold text-purple-300 px-3 py-1.5 rounded-xl bg-purple-500/15 border border-purple-500/30 shrink-0 group-hover:bg-purple-500/25 transition-colors relative z-10">
+                <span className="hidden sm:inline">Vào Buông Xả</span>
+                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+              </div>
             </div>
-          </div>
-        </motion.div>
+          </motion.div>
+        </div>
       </main>
 
       {/* Footer */}

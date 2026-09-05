@@ -1,0 +1,325 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile, settings and astrological metadata",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth user ID",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the user",
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address of the user",
+          "maxLength": 200
+        },
+        "role": {
+          "type": "string",
+          "description": "Access role",
+          "enum": ["user", "admin"]
+        },
+        "isAdmin": {
+          "type": "boolean",
+          "description": "Administrative privileges flag"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "lastLogin": {
+          "type": "string",
+          "description": "Last login timestamp"
+        }
+      },
+      "required": ["userId", "email"]
+    },
+    "ReadingItem": {
+      "title": "ReadingItem",
+      "description": "Saved divination or astrological reading result",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique reading ID",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID",
+          "maxLength": 128
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of reading",
+          "enum": ["tu-vi", "natal-chart", "tarot", "kinh-dich"]
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the reading",
+          "maxLength": 200
+        },
+        "question": {
+          "type": "string",
+          "description": "User question or inquiry",
+          "maxLength": 1000
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Epoch timestamp in milliseconds"
+        },
+        "resultMarkdown": {
+          "type": "string",
+          "description": "Complete generated reading interpretation",
+          "maxLength": 100000
+        },
+        "summary": {
+          "type": "string",
+          "description": "Short summary or key takeaway",
+          "maxLength": 1000
+        }
+      },
+      "required": ["id", "userId", "type", "title", "resultMarkdown"]
+    },
+    "PlantGarden": {
+      "title": "PlantGarden",
+      "description": "User healing mind plant garden state and diary entries",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID",
+          "maxLength": 128
+        },
+        "selectedTreeId": {
+          "type": "string",
+          "description": "ID of the chosen sacred tree",
+          "maxLength": 64
+        },
+        "level": {
+          "type": "number",
+          "description": "Current growth level (1 to 5)"
+        },
+        "currentExp": {
+          "type": "number",
+          "description": "Current accumulated experience points"
+        },
+        "waterCount": {
+          "type": "number",
+          "description": "Total times watered with manifestations"
+        },
+        "weedCount": {
+          "type": "number",
+          "description": "Total times weeded by releasing worries"
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Last updated epoch timestamp"
+        }
+      },
+      "required": ["userId", "selectedTreeId", "level", "currentExp"]
+    },
+    "DriveBackup": {
+      "title": "DriveBackup",
+      "description": "Metadata for files backed up to Google Drive",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Backup record ID",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID",
+          "maxLength": 128
+        },
+        "driveFileId": {
+          "type": "string",
+          "description": "Google Drive file ID",
+          "maxLength": 200
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Name of the file in Google Drive",
+          "maxLength": 255
+        },
+        "webViewLink": {
+          "type": "string",
+          "description": "URL to view file in Google Drive",
+          "maxLength": 500
+        },
+        "backupType": {
+          "type": "string",
+          "description": "Type of backup",
+          "enum": ["full", "reading", "plant-diary", "music", "astro-chart"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO timestamp of backup creation"
+        }
+      },
+      "required": ["id", "userId", "driveFileId", "fileName", "backupType"]
+    },
+    "AstroChart": {
+      "title": "AstroChart",
+      "description": "User astrological chart (Tu Vi or Natal Chart) with birth details and chart image for cross-device persistence",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique chart ID",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID",
+          "maxLength": 128
+        },
+        "type": {
+          "type": "string",
+          "description": "Chart type",
+          "enum": ["tu-vi", "natal-chart"]
+        },
+        "title": {
+          "type": "string",
+          "description": "Chart name or title",
+          "maxLength": 200
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Name of person whose chart was generated",
+          "maxLength": 100
+        },
+        "birthDate": {
+          "type": "string",
+          "description": "Date of birth",
+          "maxLength": 50
+        },
+        "birthHour": {
+          "type": "string",
+          "description": "Hour of birth",
+          "maxLength": 50
+        },
+        "calendarType": {
+          "type": "string",
+          "description": "Solar or lunar calendar",
+          "enum": ["solar", "lunar"]
+        },
+        "gender": {
+          "type": "string",
+          "description": "Gender",
+          "maxLength": 20
+        },
+        "birthPlace": {
+          "type": "string",
+          "description": "Place of birth",
+          "maxLength": 150
+        },
+        "chartImageUrl": {
+          "type": "string",
+          "description": "Base64 data URL or cloud image URL of the chart",
+          "maxLength": 500000
+        },
+        "notes": {
+          "type": "string",
+          "description": "Personal notes on this chart",
+          "maxLength": 2000
+        },
+        "updatedAt": {
+          "type": "number",
+          "description": "Last updated epoch timestamp"
+        }
+      },
+      "required": ["id", "userId", "type", "title"]
+    },
+    "UserMusicTrack": {
+      "title": "UserMusicTrack",
+      "description": "User uploaded music track record and cloud sync metadata for cross-device streaming",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique track ID",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID",
+          "maxLength": 128
+        },
+        "title": {
+          "type": "string",
+          "description": "Song title",
+          "maxLength": 200
+        },
+        "artist": {
+          "type": "string",
+          "description": "Artist or uploader name",
+          "maxLength": 100
+        },
+        "duration": {
+          "type": "number",
+          "description": "Duration in seconds"
+        },
+        "fileSize": {
+          "type": "string",
+          "description": "Formatted file size",
+          "maxLength": 50
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "Audio mime type",
+          "maxLength": 50
+        },
+        "driveFileId": {
+          "type": "string",
+          "description": "Associated Google Drive file ID if backed up",
+          "maxLength": 200
+        },
+        "driveUrl": {
+          "type": "string",
+          "description": "Google Drive view or stream URL",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation epoch timestamp"
+        }
+      },
+      "required": ["id", "userId", "title"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile, astrology preferences and settings"
+    },
+    "/users/{userId}/readings/{readingId}": {
+      "schema": "ReadingItem",
+      "description": "Saved divination readings and interpretations"
+    },
+    "/users/{userId}/plantGarden/{gardenId}": {
+      "schema": "PlantGarden",
+      "description": "User's mind garden plant care progress and state"
+    },
+    "/users/{userId}/driveBackups/{backupId}": {
+      "schema": "DriveBackup",
+      "description": "Metadata log of files synchronized to Google Drive"
+    },
+    "/users/{userId}/charts/{chartId}": {
+      "schema": "AstroChart",
+      "description": "Saved Horoscope (Tu Vi) and Natal Star Charts with birth details and images"
+    },
+    "/users/{userId}/musicTracks/{trackId}": {
+      "schema": "UserMusicTrack",
+      "description": "User music library tracks and cloud sync metadata for cross-device playback"
+    }
+  }
+}

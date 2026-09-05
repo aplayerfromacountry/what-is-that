@@ -1,4 +1,4 @@
-export type TabType = "tu-vi" | "natal-chart" | "tarot" | "kinh-dich" | "history";
+export type TabType = "tu-vi" | "natal-chart" | "tarot" | "kinh-dich" | "history" | "plant-diary";
 
 export interface AstrologicalProfile {
   fullName?: string;
@@ -25,6 +25,35 @@ export interface UserProfile {
   createdAt?: string;
   lastLogin?: string;
   astroProfile?: AstrologicalProfile;
+}
+
+export interface AstroChartItem {
+  id: string;
+  userId: string;
+  type: "tu-vi" | "natal-chart";
+  title: string;
+  fullName?: string;
+  birthDate?: string;
+  birthHour?: string;
+  calendarType?: "solar" | "lunar";
+  gender?: string;
+  birthPlace?: string;
+  chartImageUrl?: string;
+  notes?: string;
+  updatedAt: number;
+}
+
+export interface UserMusicCloudRecord {
+  id: string;
+  userId: string;
+  title: string;
+  artist?: string;
+  duration?: number;
+  fileSize?: string;
+  mimeType?: string;
+  driveFileId?: string;
+  driveUrl?: string;
+  createdAt?: number;
 }
 
 export interface TuViAspect {
@@ -125,4 +154,49 @@ export interface DailyLunarInfo {
   unluckyHours: string[];
   suitableActivities: string[];
   unsuitableActivities: string[];
+}
+
+export type PlantTreeType = "sakura" | "ginkgo" | "bodhi" | "wisteria";
+
+export interface PlantTreeOption {
+  id: PlantTreeType;
+  name: string;
+  nameEn: string;
+  title: string;
+  element: string;
+  meaning: string;
+  description: string;
+  imageUrl: string;
+  googlePhotoUrl?: string;
+  googlePhotoCredit?: string;
+  accentGradient: string;
+  accentColor: string;
+  borderColor: string;
+  tagColor: string;
+  manifestSuggestions: string[];
+  sorrowSuggestions: string[];
+}
+
+export interface PlantDiaryEntry {
+  id: string;
+  type: "water" | "weed"; // "water": tưới cây bằng manifest, "weed": nhặt cỏ trút bỏ phiền muộn
+  treeId: PlantTreeType;
+  treeName: string;
+  content: string;
+  timestamp: number;
+  dateStr: string;
+  expGained: number;
+  wisdomMessage?: string;
+}
+
+export interface UserPlantGardenState {
+  selectedTreeId: PlantTreeType;
+  level: number; // 1 to 5
+  exp: number; // current level progress (e.g. 0-100)
+  totalExp: number;
+  waterCount: number;
+  weedCount: number;
+  plantedAt: number;
+  lastTendedAt: number;
+  entries: PlantDiaryEntry[];
 }
